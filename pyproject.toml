@@ -1,0 +1,62 @@
+[tool.poetry]
+name = "bella-issues-bot"
+version = "0.0.1"
+description = ""
+authors = [""]
+license = "MIT"
+readme = "README.md"
+homepage = ""
+repository = ""
+documentation = ""
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+bella-engineer = "0.3.1"
+gitpython = "^3.1.40"
+PyGithub = "^2.1.1"
+langchain = ">=0.2.0,<0.3.0"
+langchain-openai = ">=0.0.5"
+langchain-core = ">=0.2.0,<0.3.0"
+langchain-community = ">=0.2.0,<0.3.0"
+python-dotenv = "^1.0.0"
+pydantic = "1.10.8"
+openai = "^1.3.5"
+pytest = "^7.4.0"
+pathspec = ">=0.9.0"
+toml = ">=0.10.2"
+typing-extensions = ">=4.0.0"
+
+[tool.poetry.scripts]
+bella-issuses-bot = ''
+
+[tool.ruff]
+select = ["F", "E", "W", "I001"]
+show-fixes = false
+target-version = "py310"
+task-tags = ["TODO", "FIXME"]
+extend-ignore = ["E501", "E722"]
+
+[tool.black]
+target-version = ["py310"]
+
+[tool.ruff.isort]
+known-first-party = []
+known-third-party = []
+section-order = [
+  "future",
+  "standard-library",
+  "third-party",
+  "first-party",
+  "local-folder",
+]
+combine-as-imports = true
+split-on-trailing-comma = false
+lines-between-types = 1
