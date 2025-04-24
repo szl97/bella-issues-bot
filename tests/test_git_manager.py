@@ -1,10 +1,40 @@
 import os
+
+from dotenv import load_dotenv
+
 from core.git_manager import GitManager, GitConfig
 import tempfile
 import time
 
 
+def test_create_branch_then_commit_then_push():
+    config = GitConfig(
+        repo_path="../."
+    )
+    git_manager = GitManager(config)
+    git_manager.switch_branch(branch_name="test-branches", create=True)
+    git_manager.commit("test commit")
+    git_manager.push()
+
+def test_clone_and_pull():
+    load_dotenv()
+    os.makedirs("../../test-clone", exist_ok=True)
+    config = GitConfig(
+        default_branch="test-branches",
+        repo_path="../../test-clone",
+        remote_url="https://github.com/szl97/bella-issues-bot.git",
+        auth_token=os.getenv("GITHUB_TOKEN")
+    )
+    git_manager = GitManager(config)
+    git_manager.pull()
+    git_manager.switch_branch(branch_name="test-branches", create=True)
+    git_manager.commit("test commit")
+    git_manager.push(force=True)
+
+
+
 def test_real_github_operations():
+    load_dotenv()
     """
     真实测试与 GitHub 仓库的交互
     
@@ -12,9 +42,9 @@ def test_real_github_operations():
     跳过此测试：pytest -k "not test_real_github_operations"
     """
 
-    github_token = ""
+    github_token = os.getenv("GITHUB_TOKEN")
 
-    repo_url = "https://github.com/szl97/test-git.git"
+    repo_url = os.getenv("GIT_REMOTE")
     
     # 创建临时目录用于克隆
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -69,15 +99,16 @@ def test_real_github_operations():
 
 
 def test_add_issue_comment():
+    load_dotenv()
     """
     测试在 GitHub Issues 下添加评论的功能
     
     注意：此测试需要互联网连接、有效的 GitHub 访问令牌，以及仓库中存在的 Issue
     跳过此测试：pytest -k "not test_add_issue_comment"
     """
-    github_token = ""
-    
-    repo_url = "https://github.com/szl97/test-git.git"
+    github_token = os.getenv("GITHUB_TOKEN")
+
+    repo_url = os.getenv("GIT_REMOTE")
     issue_number = 1  # 确保仓库中存在此 Issue 编号
     
     # 创建临时目录

@@ -192,31 +192,44 @@ class GitManager:
             logger.error(f"Failed to pull changes: {str(e)}")
             raise
 
-    def push(self, branch: Optional[str] = None, force: bool = False) -> None:
+    def push(
+        self, branch: Optional[str] = None, force: bool = False, set_upstream: bool = True
+    ) -> None:
         """
         Push changes to remote repository
 
         Args:
-            branch: Branch to push to. If None, pushes current branch
+            branch: Branch to push. If None, pushes current branch
             force: Whether to force push
+            set_upstream: Whether to set upstream branch if it doesn't exist
         """
         try:
-            # 确保远程仓库配置了认证令牌
-            if self.config.auth_token and self.config.remote_url:
+            # 确保远程 URL 包含认证令牌
+            if self.config.auth_token:
                 self._set_remote_with_auth()
 
+            # 如果没有指定分支，获取当前分支
+            current_branch = branch or self.get_current_branch()
+            
             # 执行推送操作
             if force:
-                if branch:
-                    self.repo.git.push("-f", self.config.remote_name, branch)
+                if set_upstream:
+                    self.repo.git.push("-f", "--set-upstream", self.config.remote_name, current_branch)
                 else:
-                    self.repo.git.push("-f")
+                    if branch:
+                        self.repo.git.push("-f", self.config.remote_name, branch)
+                    else:
+                        self.repo.git.push("-f")
             else:
-                if branch:
-                    self.repo.git.push(self.config.remote_name, branch)
+                if set_upstream:
+                    self.repo.git.push("--set-upstream", self.config.remote_name, current_branch)
                 else:
-                    self.repo.git.push()
-            logger.info(f"Successfully pushed changes to {branch or 'current branch'}")
+                    if branch:
+                        self.repo.git.push(self.config.remote_name, branch)
+                    else:
+                        self.repo.git.push()
+                        
+            logger.info(f"Successfully pushed changes to {current_branch}")
         except git.GitCommandError as e:
             logger.error(f"Failed to push changes: {str(e)}")
             raise
@@ -327,67 +340,41 @@ class GitManager:
 
             # 添加修改的文件
             for diff in diff_index.iter_change_type("M"):
-                changed_files.add(diff.a_path)
+                if not self.is_ignore(diff.a_path):
+                    changed_files.add(diff.a_path)
 
             # 添加增加的文件
             for diff in diff_index.iter_change_type("A"):
-                changed_files.add(diff.b_path)
+                if not self.is_ignore(diff.b_path):
+                    changed_files.add(diff.b_path)
 
             # 添加删除的文件
             for diff in diff_index.iter_change_type("D"):
-                changed_files.add(diff.a_path)
+                if not self.is_ignore(diff.b_path):
+                    changed_files.add(diff.a_path)
 
             return list(changed_files)
         except Exception as e:
             logger.error(f"获取变更文件列表失败: {str(e)}")
             return []
 
-    def get_current_commit_id(self) -> str:
-        """获取当前提交的 ID"""
-        try:
-            return self.repo.head.commit.hexsha
-        except Exception as e:
-            logger.error(f"获取当前提交 ID 失败: {str(e)}")
-            return ""
+    def is_ignore(self, path: str) -> bool:
+        # 检查文件名是否以点开头
+        file_name = os.path.basename(path)
+        if file_name.startswith('.'):
+            return True
+        # 检查路径中是否包含以点开头的目录
+        path_parts = path.split(os.path.sep)
+        for part in path_parts:
+        # 跳过空字符串（可能出现在路径开头）
+            if not part:
+                continue
+            # 如果目录名以点开头，则忽略
+            if part.startswith('.'):
+                return True
 
-    def get_changed_files(self, old_commit: str, new_commit: str) -> List[str]:
-        """
-        获取两个提交之间变更的文件列表
-
-        Args:
-            old_commit: 旧提交的 ID
-            new_commit: 新提交的 ID
-
-        Returns:
-            变更的文件路径列表
-        """
-        try:
-            # 获取提交对象
-            old = self.repo.commit(old_commit)
-            new = self.repo.commit(new_commit)
-
-            # 获取差异
-            diff_index = old.diff(new)
-
-            # 收集所有变更的文件
-            changed_files = set()
-
-            # 添加修改的文件
-            for diff in diff_index.iter_change_type("M"):
-                changed_files.add(diff.a_path)
-
-            # 添加增加的文件
-            for diff in diff_index.iter_change_type("A"):
-                changed_files.add(diff.b_path)
-
-            # 添加删除的文件
-            for diff in diff_index.iter_change_type("D"):
-                changed_files.add(diff.a_path)
-
-            return list(changed_files)
-        except Exception as e:
-            logger.error(f"获取变更文件列表失败: {str(e)}")
-            return []
+        # 如果不满足任何忽略条件，则不忽略
+        return False
 
     def delete_local_repository(self, remove_git_config: bool = False) -> None:
         """
@@ -527,4 +514,36 @@ class GitManager:
 
         except Exception as e:
             logger.error(f"添加 Issue 评论失败: {str(e)}")
+            raise
+
+    def commit(self, message: str, add_all: bool = True, files: Optional[List[str]] = None) -> str:
+        """
+        创建一个新的提交
+        
+        Args:
+            message: 提交信息
+            add_all: 是否添加所有变更的文件，默认为 True
+            files: 要添加的特定文件列表，如果 add_all 为 True 则忽略此参数
+            
+        Returns:
+            str: 新提交的 SHA 哈希值
+            
+        Raises:
+            git.GitCommandError: 如果 Git 操作失败
+        """
+        try:
+            # 添加文件到暂存区
+            if add_all:
+                self.repo.git.add(A=True)
+            elif files:
+                for file in files:
+                    self.repo.git.add(file)
+            
+            # 创建提交
+            commit = self.repo.index.commit(message)
+            logger.info(f"成功创建提交: {commit.hexsha[:7]} - {message}")
+            
+            return commit.hexsha
+        except git.GitCommandError as e:
+            logger.error(f"创建提交失败: {str(e)}")
             raise

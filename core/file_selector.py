@@ -1,5 +1,7 @@
 import os
 from typing import List, Optional
+
+from dotenv import load_dotenv
 from langchain.tools import Tool
 
 from core.ai import AIAssistant, AIConfig
@@ -33,13 +35,13 @@ class FileSelector:
             config=self.ai_config,
             tools=[self.select_files_tool]
         )
-        
-        # 初始化并更新文件描述
-        file_memory = FileMemory(FileMemoryConfig(
-            project_dir=project_dir,
-            ai_config=ai_config
-        ))
-        file_memory.update_file_details()
+
+        # # 初始化并更新文件描述
+        # file_memory = FileMemory(FileMemoryConfig(
+        #     project_dir=project_dir,
+        #     ai_config=ai_config
+        # ))
+        # file_memory.update_file_details()
     
     def _ensure_selection_file(self) -> None:
         """确保文件选择文件存在"""
@@ -66,7 +68,13 @@ class FileSelector:
                 
                 # 使用 FileManager 重新设置文件选择状态
                 FileManager.reuncomment_files(self.project_dir, files)
-                
+                log_dir = os.path.join(self.project_dir, ".gpteng/memory/logs")
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, "file_selected_log.txt")
+                # 写日志
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.writelines("\n".join(files))
+
                 result = f"已成功选择以下文件:\n{', '.join(files)}"
                 print(f"===== select_files 工具执行结果: {result} =====")  
                 return result
@@ -103,6 +111,19 @@ class FileSelector:
             prompt, 
             use_tools=True
         )
+
+    def select_files_for_requirement_with_log(self, requirement: str) -> None:
+        log_path = os.path.join(
+            self.project_dir, ".gpteng", "memory/logs/file_selected_log.txt"
+        )
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            FileManager.reuncomment_files(self.project_dir, content.split('\n'))
+        else:
+            self.select_files_for_requirement(requirement)
+
+
     
     def _build_prompt(self, requirement: str, all_files: List[str]) -> str:
         """
@@ -115,23 +136,37 @@ class FileSelector:
         Returns:
             构建的提示词
         """
+        file_str = "\n".join(all_files)
+        files_memory = f"""
+以下是项目中的所有文件:
+{file_str}
+"""
         # 获取文件描述
         file_descriptions = FileMemory.get_file_descriptions(self.project_dir)
-        
-        # 构建文件描述字符串
-        files_str = "\n".join([
-            f"- {file}：{file_descriptions.get(file, '无描述')}" 
-            for file in sorted(all_files)
-        ])
+
+        if len(file_descriptions) > 0:
+            # 构建文件描述字符串
+            file_str = "\n".join([
+                f"- {file}：{file_descriptions.get(file, '无描述')}"
+                for file in sorted(all_files)
+            ])
+            files_memory = f"""
+以下是项目中的所有文件及其功能描述：
+
+{file_str}
+"""
+        else:
+            print("file memory is not exists")
+
+
         
         return f"""
 我需要实现以下功能：
 
 {requirement}
 
-以下是项目中的所有文件及其功能描述：
 
-{files_str}
+{files_memory}
 
 请分析这个功能需求，并根据文件的功能描述，确定实现这个功能所需的文件。
 你的回答应该只包含文件名列表，每个文件名应该与上面列表中的完全匹配。
@@ -139,25 +174,19 @@ class FileSelector:
 """
 
 if __name__ == "__main__":
+    load_dotenv()
     requirement = """
-    file_selector.py 调用 file_manager 和 ai.py 在解决用户编码需求前选择文件，
+    file_selector.py 在解决用户编码需求前选择文件，
     目前仅仅使用了文件名，应该将文件描述给模型效果会更好，因此，请实现 file_memory。
-    方法1：
-    1、如果不存在file_memory，通过 ai.py 为项目目录中的每个文件生成描述，获取所有文件使用FileManager的get_all_files_without_ignore
+    1、如果不存在file_memory，为项目目录中的每个文件生成描述
     2、注意调用大模型的提示词的优化和上下文长度，提示词请使用中文，每次处理小于10000行
     3、模型生成的文件描述，保存在.gpteng/memory/file_details中，格式为一个文件一行，filename:描述，filename要和file_manager的filename对应。
-    4、在.gpteng/memory/file_details保存当前的git的id，下一次触发时，如果存在.gpteng/memory/file_details，根据gitlog找到修改的文件、新增的文件和删除的文件，只进行增量处理
-    5、git的相关操作在git_manager中，如果有需要的方法没实现，需要实现
-    方法2:
-    1、通过file_memory提供一个静态方法来获取文件描述
-    2、file_selector的_build_prompt，传入的文件名改为文件描述
+    4、在.gpteng/memory/file_details保存当前的git的id，下一次触发时，如果存在.gpteng/memory/file_details.txt，根据gitlog找到修改的文件、新增的文件和删除的文件，只进行增量处理
     *******************************************************
     项目的依赖在 pyproject.toml文件中获取
     """
     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
     selector = FileSelector(project_dir, ai_config=AIConfig(
-        base_url="https://test-bella-openapi.ke.com/v1",
-        api_key="",
         temperature=0.7,
         model_name="claude-3.5-sonnet"
     ))

@@ -1,5 +1,6 @@
 import os
 
+from dotenv import load_dotenv
 from gpt_engineer.applications.cli.gpt_engineer_client import GPTEngineerClient
 
 from core.ai import AIConfig
@@ -8,7 +9,7 @@ from core.file_selector import FileSelector
 
 def main():
 
-
+    load_dotenv()
     requirement = """
     file_selector.py 调用 file_manager 和 ai.py 在解决用户编码需求前选择文件，
     目前仅仅使用了文件名，应该将文件描述给模型效果会更好，因此，请实现 file_memory。
@@ -16,7 +17,7 @@ def main():
     1、如果不存在file_memory，通过 ai.py 为项目目录中的每个文件生成描述，获取所有文件使用FileManager的get_all_files_without_ignore
     2、注意调用大模型的提示词的优化和上下文长度，提示词请使用中文，每次处理小于10000行
     3、模型生成的文件描述，保存在.gpteng/memory/file_details中，格式为一个文件一行，filename:描述，filename要和file_manager的filename对应。
-    4、在.gpteng/memory/file_details保存当前的git的id，下一次触发时，如果存在.gpteng/memory/file_details，根据gitlog找到修改的文件、新增的文件和删除的文件，只进行增量处理
+    4、在.gpteng/memory/file_details保存当前的git的id，下一次触发时，如果存在.gpteng/memory/file_details.txt，根据gitlog找到修改的文件、新增的文件和删除的文件，只进行增量处理
     5、git的相关操作在git_manager中，如果有需要的方法没实现，需要实现
     方法2:
     1、通过file_memory提供一个静态方法来获取文件描述
@@ -37,8 +38,6 @@ def main():
 
     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "."))
     selector = FileSelector(project_dir, ai_config=AIConfig(
-        base_url="https://test-bella-openapi.ke.com/v1",
-        api_key="",
         temperature=0.7,
         model_name="claude-3.5-sonnet"
     ))
@@ -48,8 +47,6 @@ def main():
     # 创建客户端实例
     client = GPTEngineerClient(
         project_path=project_dir,
-        openai_api_key="",
-        openai_api_base="https://test-bella-openapi.ke.com/v1",
         model="coder-model",
         temperature=1
     )

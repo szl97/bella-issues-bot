@@ -3,6 +3,8 @@ import logging
 from typing import Dict, List, Set, Tuple
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
 from core.ai import AIAssistant, AIConfig
 from core.file_manager import FileManager
 from core.git_manager import GitManager, GitConfig
@@ -22,7 +24,7 @@ class FileMemory:
     """管理文件描述的记忆"""
 
     MEMORY_DIR = ".gpteng/memory"
-    FILE_DETAILS_PATH = f"{MEMORY_DIR}/file_details"
+    FILE_DETAILS_PATH = f"{MEMORY_DIR}/file_details.txt"
     GIT_ID_FILE = f"{MEMORY_DIR}/git_id"
     CHUNK_SIZE = 10000  # 每次处理的最大行数
 
@@ -194,3 +196,14 @@ class FileMemory:
         except Exception as e:
             logger.error(f"读取文件描述失败: {str(e)}")
             return {}
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+    memory = FileMemory(FileMemoryConfig(project_dir, ai_config=AIConfig(
+        temperature=0.7,
+        model_name="claude-3.5-sonnet"
+    )))
+
+    memory.update_file_details()

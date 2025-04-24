@@ -153,10 +153,6 @@ class FileManager:
         """
         selection_path = os.path.join(root_dir, ".gpteng", "file_selection.toml")
 
-        log_path = os.path.join(
-            root_dir, ".gpteng", "memory/logs/file_selected_log.txt"
-        )
-
         try:
             # 读取文件
             with open(selection_path, "r", encoding="utf-8") as f:
@@ -202,9 +198,6 @@ class FileManager:
             # 写回文件
             with open(selection_path, "w", encoding="utf-8") as f:
                 f.writelines(lines)
-            # 写日志
-            with open(log_path, "w", encoding="utf-8") as f:
-                f.writelines("\n".join(files_to_uncomment))
 
         except Exception as e:
             raise Exception(f"更新选择文件时出错: {str(e)}")
