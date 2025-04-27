@@ -5,7 +5,8 @@ from logging.handlers import RotatingFileHandler
 
 import colorlog
 
-def setup_logging(log_dir='logs', log_level=logging.INFO, log_file='app.log'):
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+def setup_logging(log_dir=f'{project_dir}/logs', log_level=logging.INFO, log_file='app.log'):
     """
     设置日志配置，使用 colorlog 实现彩色控制台输出
     

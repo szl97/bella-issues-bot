@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
 from client.cli import parse_args, get_requirement_text, build_config_from_args
-from log_config import setup_logging
+from core.log_config import setup_logging
 
 
 def run_workflow_from_terminal() -> str:

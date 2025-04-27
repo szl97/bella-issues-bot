@@ -7,7 +7,7 @@ import os
 from dotenv import load_dotenv
 
 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
-from log_config import setup_logging
+from core.log_config import setup_logging
 
 
 def main():
