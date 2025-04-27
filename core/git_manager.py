@@ -1,12 +1,14 @@
+import os
+import shutil
 from dataclasses import dataclass
 from typing import Optional, List
-import git
-import os
-import logging
-import shutil
 from urllib.parse import urlparse, urlunparse
 
-logger = logging.getLogger(__name__)
+import git
+
+from log_config import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -16,8 +18,12 @@ class GitConfig:
     repo_path: str
     remote_name: str = "origin"
     default_branch: str = "main"
-    remote_url: Optional[str] = None
-    auth_token: Optional[str] = None
+    remote_url: Optional[str] = os.getenv("GIT_REMOTE")
+    auth_token: Optional[str] = os.getenv("GITHUB_TOKEN")
+
+
+def get_issues_branch_name(issues_id: int, round: int) -> str:
+    return f"bella-bot-issues-{issues_id}-{round}"
 
 
 class GitManager:
@@ -193,7 +199,10 @@ class GitManager:
             raise
 
     def push(
-        self, branch: Optional[str] = None, force: bool = False, set_upstream: bool = True
+        self,
+        branch: Optional[str] = None,
+        force: bool = False,
+        set_upstream: bool = True,
     ) -> None:
         """
         Push changes to remote repository
@@ -210,11 +219,13 @@ class GitManager:
 
             # 如果没有指定分支，获取当前分支
             current_branch = branch or self.get_current_branch()
-            
+
             # 执行推送操作
             if force:
                 if set_upstream:
-                    self.repo.git.push("-f", "--set-upstream", self.config.remote_name, current_branch)
+                    self.repo.git.push(
+                        "-f", "--set-upstream", self.config.remote_name, current_branch
+                    )
                 else:
                     if branch:
                         self.repo.git.push("-f", self.config.remote_name, branch)
@@ -222,13 +233,15 @@ class GitManager:
                         self.repo.git.push("-f")
             else:
                 if set_upstream:
-                    self.repo.git.push("--set-upstream", self.config.remote_name, current_branch)
+                    self.repo.git.push(
+                        "--set-upstream", self.config.remote_name, current_branch
+                    )
                 else:
                     if branch:
                         self.repo.git.push(self.config.remote_name, branch)
                     else:
                         self.repo.git.push()
-                        
+
             logger.info(f"Successfully pushed changes to {current_branch}")
         except git.GitCommandError as e:
             logger.error(f"Failed to push changes: {str(e)}")
@@ -264,7 +277,10 @@ class GitManager:
         """
         try:
             if create:
-                self.repo.git.checkout("-b", branch_name)
+                try:
+                    self.repo.git.checkout("-b", branch_name)
+                except:
+                    self.repo.git.checkout(branch_name)
             else:
                 self.repo.git.checkout(branch_name)
             logger.info(f"Successfully switched to branch: {branch_name}")
@@ -361,16 +377,16 @@ class GitManager:
     def is_ignore(self, path: str) -> bool:
         # 检查文件名是否以点开头
         file_name = os.path.basename(path)
-        if file_name.startswith('.'):
+        if file_name.startswith("."):
             return True
         # 检查路径中是否包含以点开头的目录
         path_parts = path.split(os.path.sep)
         for part in path_parts:
-        # 跳过空字符串（可能出现在路径开头）
+            # 跳过空字符串（可能出现在路径开头）
             if not part:
                 continue
             # 如果目录名以点开头，则忽略
-            if part.startswith('.'):
+            if part.startswith("."):
                 return True
 
         # 如果不满足任何忽略条件，则不忽略
@@ -516,18 +532,20 @@ class GitManager:
             logger.error(f"添加 Issue 评论失败: {str(e)}")
             raise
 
-    def commit(self, message: str, add_all: bool = True, files: Optional[List[str]] = None) -> str:
+    def commit(
+        self, message: str, add_all: bool = True, files: Optional[List[str]] = None
+    ) -> str:
         """
         创建一个新的提交
-        
+
         Args:
             message: 提交信息
             add_all: 是否添加所有变更的文件，默认为 True
             files: 要添加的特定文件列表，如果 add_all 为 True 则忽略此参数
-            
+
         Returns:
             str: 新提交的 SHA 哈希值
-            
+
         Raises:
             git.GitCommandError: 如果 Git 操作失败
         """
@@ -538,12 +556,108 @@ class GitManager:
             elif files:
                 for file in files:
                     self.repo.git.add(file)
-            
+
             # 创建提交
             commit = self.repo.index.commit(message)
             logger.info(f"成功创建提交: {commit.hexsha[:7]} - {message}")
-            
+
             return commit.hexsha
         except git.GitCommandError as e:
             logger.error(f"创建提交失败: {str(e)}")
+            raise
+
+    def reset_to(self, target_branch: str) -> bool:
+        """
+        将当前分支重置到远程目标分支的状态
+
+        Args:
+            target_branch: 目标分支名称
+
+        Returns:
+            bool: 操作是否成功
+        """
+        try:
+            # 获取远程分支
+            remote_branches = self.list_branches(remote=True)
+
+            # 检查目标分支是否存在于远端
+            if target_branch not in remote_branches:
+                logger.warning(f"目标分支 {target_branch} 不存在于远端")
+                return False
+            
+            # 切换到目标分支，如果不存在则创建
+            logger.info(f"切换到分支: {target_branch}")
+            self.switch_branch(target_branch, create=True)
+            
+            # 拉取最新代码
+            logger.info(f"拉取远程分支: {target_branch} 的最新代码")
+            self.pull()
+            
+            # 强制重置到远程分支状态
+            remote_name = self.config.remote_name
+            logger.info(f"重置到远程分支: {remote_name}/{target_branch}")
+            self.repo.git.reset(f"{remote_name}/{target_branch}", hard=True)
+
+            logger.info(f"成功重置到版本: {target_branch}")
+            return True
+        except git.GitCommandError as e:
+            logger.error(f"重置到分支 {target_branch} 失败: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"重置过程中发生未知错误: {str(e)}")
+            return False
+
+    def reset_to_issue_branch(self, issue_id: int) -> str:
+        """
+        拉取指定issue对应的最新分支并切换到该分支
+        如果该issue还未创建过分支，则切换到默认分支
+
+        Args:
+            issue_id: Issue编号
+
+        Returns:
+            str: 成功切换到的分支名称
+
+        Raises:
+            git.GitCommandError: 如果Git操作失败
+        """
+        try:
+            # 确保远程仓库信息是最新的
+            self.repo.git.fetch(self.config.remote_name)
+            logger.info(f"成功获取远程仓库信息")
+
+            # 获取所有远程分支
+            remote_branches = self.repo.git.branch("-r").splitlines()
+            remote_branches = [branch.strip() for branch in remote_branches]
+
+            # 查找与指定issue相关的分支
+            issue_branches = []
+            for branch in remote_branches:
+                # 移除远程名称前缀
+                branch_name = branch.split("/", 1)[-1] if "/" in branch else branch
+                # 检查是否是该issue的分支
+                if f"bella-bot-issues-{issue_id}-" in branch_name:
+                    issue_branches.append(branch_name)
+            remote_name = self.config.remote_name
+            if issue_branches:
+                # 按照轮次排序，获取最新的分支
+                issue_branches.sort(key=lambda x: int(x.split("-")[-1]) if x.split("-")[-1].isdigit() else 0, reverse=True)
+                latest_branch = issue_branches[0]
+                # 切换到最新分支
+                self.switch_branch(latest_branch, create=True)
+                self.pull()
+                logger.info(f"重置到远程分支: {remote_name}/{latest_branch}")
+                self.repo.git.reset(f"{remote_name}/{latest_branch}", hard=True)
+                logger.info(f"成功切换到issue #{issue_id}的最新分支: {latest_branch}")
+                return latest_branch
+            else:
+                # 如果没有找到相关分支，切换到默认分支
+                self.switch_branch(self.config.default_branch)
+                self.pull()
+                logger.info(f"重置到远程分支: {remote_name}/{self.config.default_branch}")
+                self.repo.git.reset(f"{remote_name}/{self.config.default_branch}", hard=True)
+                logger.info(f"未找到issue #{issue_id}的分支，已切换到默认分支: {self.config.default_branch}")
+                return self.config.default_branch
+        except git.GitCommandError as e:
+            logger.error(f"切换到issue分支时出错: {str(e)}")
             raise

@@ -1,0 +1,17 @@
+poetry.lock
+.eng/
+.git/
+.gitignore
+*.ico
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+*.wav
+*.mp3
+*.pcm
+*.mp4
+*.env
+*.lock

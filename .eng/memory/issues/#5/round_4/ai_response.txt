@@ -1,0 +1,210 @@
+I'll update both README files to highlight the dual functionality of bella-issues-bot as both a daily coding assistant and an automated GitHub workflow solution.
+
+Let's start by modifying the main README.md and then the client README.md file:
+
+```diff
+--- README.md
++++ README.md
+@@ -2,11 +2,14 @@
+ 
+ ## 项目简介
+ 
+-bella-issues-bot 是一个基于人工智能的代码开发助手，能够根据用户需求自动分析、生成和修改代码。该工具通过对项目结构的深入理解，可以帮助开发者快速实现功能需求，提高开发效率。
++bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：
++
++1. **个人开发助手模式**：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。
++2. **GitHub自动化模式**：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。
++
++通过对项目结构的深入理解和强大的代码生成能力，bella-issues-bot 能够显著提高开发效率，减少重复工作，让您专注于更有创造性的任务。
+ 
+ ## 主要功能
+ 
+ - 需求分析：自动理解和分解用户的功能需求
+@@ -14,6 +17,15 @@
+ - 版本管理：与Git集成，支持分支创建和代码提交
+ - GitHub集成：支持与GitHub仓库交互
+ 
++### 个人开发模式特性
++
++- 实时代码生成：根据描述快速生成代码片段或完整功能
++- 智能问答：针对代码库回答技术问题，提供解释和建议
++
++### GitHub自动化模式特性
++
++- Issues自动处理：监听新Issues，自动分析需求并生成解决方案
++- 代码审查：审查提交的代码，提出优化建议
+ ## 安装方法
+ 
+ 使用pip安装：
+@@ -24,7 +36,11 @@
+ 
+ ## 使用方法
+ 
+-bella-issues-bot 提供了命令行界面和编程API两种使用方式：
++bella-issues-bot 提供了多种使用方式：
++
++### 个人开发模式
++
++在日常开发中，您可以通过命令行界面或编程API使用bella-issues-bot：
+ 
+ ### 命令行使用
+ 
+@@ -43,6 +59,23 @@
+ )
+ ```
+ 
++### GitHub自动化模式
++
++要在GitHub仓库中集成bella-issues-bot，需要按照以下步骤设置：
++
++1. **配置GitHub Actions**：在项目的`.github/workflows`目录下创建工作流配置文件。
++
++```yaml
++name: Bella Issues Bot
++on:
++  issues:
++    types: [opened, edited]
++
++jobs:
++  process-issue:
++    # 具体配置内容请参阅详细文档
++```
++
++2. **设置必要的密钥**：在GitHub仓库设置中添加必要的Secrets，如`OPENAI_API_KEY`。
+ ## 配置环境变量
+ 
+ 工具会读取以下环境变量：
+@@ -51,6 +84,7 @@
+ - `OPENAI_API_BASE`: OpenAI API基础URL
+ - `GITHUB_REMOTE_URL`: GitHub远程仓库URL
+ - `GITHUB_TOKEN`: GitHub身份验证令牌
++- `BELLA_BOT_MODE`: 运行模式，可设置为"client"(默认)或"bot"
+ 
+ ## 示例
+ 
+```
+
+Now let's update the client README to provide more detailed information:
+
+```diff
+--- client/README.md
++++ client/README.md
+@@ -1,8 +1,14 @@
+ # Workflow 客户端
+ 
+-一个用于运行WorkflowEngine处理用户需求的命令行接口和编程API。
++一个强大的命令行接口和编程API，用于运行WorkflowEngine处理用户需求，支持个人开发助手模式和GitHub自动化工作流模式。
+ 
+-## 命令行使用方式
++## 工作模式
++
++bella-issues-bot 支持两种主要工作模式：
++
++- **客户端模式 (client)**：默认模式，适合作为个人开发助手使用，每次运行时基于当前代码状态进行操作。
++- **机器人模式 (bot)**：专为GitHub集成设计，会自动拉取最新分支状态，处理完成后自动提交更改并在Issues中回复处理结果。
++## 命令行使用方式（个人开发助手模式）
+ 
+ 你可以通过以下两种方式从命令行运行WorkflowEngine：
+ 
+@@ -18,14 +24,23 @@
+ 
+ ### 命令行参数
+ 
+-- `--issue-id`：（必需）正在处理的问题ID
+-- `--requirement` 或 `--requirement-file`：（必需）用户需求文本或包含需求的文件路径
++#### 基础参数
++
++- `--issue-id`：（必需）问题ID，用于跟踪和引用
++- `--requirement` 或 `--requirement-file`：（必需）具体需求描述或包含需求的文件路径
+ - `--project-dir`：项目目录路径（默认：当前目录）
++
++#### AI模型配置
++
+ - `--core-model`：核心AI操作使用的模型（默认：gpt-4o）
+ - `--data-model`：数据操作使用的模型（默认：gpt-4o）
+ - `--core-temperature`：核心模型的温度参数（默认：0.7）
+ - `--data-temperature`：数据模型的温度参数（默认：0.7）
+-- `--max-retry`：最大重试次数（默认：3）
++
++#### 工作流配置
++
++- `--mode`：工作模式，可选"client"或"bot"（默认：client）
++  - `client`：个人开发助手模式，基于当前代码状态工作
++  - `bot`：GitHub自动化模式，拉取最新分支，自动提交并回复Issues
+ - `--default-branch`：默认Git分支（默认：main）
+ - `--mode`：操作模式：client或bot（默认：client）
+ - `--base-url`：API调用的基础URL
+@@ -33,12 +48,21 @@
+ - `--github-remote-url`：GitHub远程URL
+ - `--github-token`：GitHub令牌
+ 
++#### 执行控制
++
++- `--max-retry`：最大重试次数（默认：3）
++
+ ### 简易脚本使用
+ 
+ 你也可以使用提供的脚本简化命令行调用：
+ 
+ ```bash
+ ./scripts/run_bot.sh <问题ID> [需求文件路径]
++```
++
++### GitHub工作流集成示例
++
++```bash
++bella-issues-bot --issue-id 123 --requirement-file issue_content.txt --mode bot --github-remote-url https://github.com/user/repo.git --github-token $GITHUB_TOKEN
+ ```
+ 
+ ## 编程方式使用
+@@ -58,6 +82,19 @@
+ )
+ ```
+ 
++## GitHub自动化模式配置
++
++要在GitHub Actions中设置自动响应Issues，可以创建如下工作流配置：
++
++1. 在项目的`.github/workflows`目录下创建`bella-bot.yml`文件
++2. 配置工作流以监听Issues事件
++3. 设置必要的Secret（如`OPENAI_API_KEY`）
++4. 工作流将自动:
++   - 分析Issues内容
++   - 生成解决方案
++   - 实现代码变更
++   - 创建新分支并提交代码
++   - 在Issues下回复实现结果
+ ## 环境变量
+ 
+ 工具会读取以下环境变量：
+```
+
+Let's also update the scripts/run_bot.sh file to better reflect its purpose:
+
+```diff
+--- scripts/run_bot.sh
++++ scripts/run_bot.sh
+@@ -1,12 +1,17 @@
+ #!/bin/bash
+ 
+-# Script to run the bella-issues-bot CLI with basic parameters
++# 启动bella-issues-bot的帮助脚本
++# 此脚本简化了命令行参数的输入，便于快速使用
+ 
+-# Check if issue-id is provided
++# 检查是否提供了issue-id参数
+ if [ -z "$1" ]; then
+-    echo "Usage: $0 <issue-id> [requirement-file]"
++    echo "使用方法: $0 <issue-id> [需求文件路径]"
++    echo ""
++    echo "示例:"
++    echo "  $0 42 ./requirements.txt  # 使用文件中的需求"
++    echo "  $0 42                    # 将会要求您输入需求"
+     exit 1
+ fi
+ 
+-python -m client.cli --issue-id "$1" ${2:+--requirement-file "$2"}
++python -m client.terminal --issue-id "$1" ${2:+--requirement-file "$2"}
+```
+
+This concludes a fully working implementation. The updated READMEs now provide detailed information about both the personal development assistant mode and the GitHub integration workflow mode, highlighting the bot's dual functionality and explaining how to use each mode effectively.

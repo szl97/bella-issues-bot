@@ -1,0 +1,3329 @@
+# 项目文件描述
+
+
+- examples/example_chat_process.py: 演示如何使用ChatProcessor处理用户对话需求的示例。初始化必要组件（LogManager、GitManager、AIConfig），选择相关文件提供上下文，并使用ChatProcessor处理用户问题，适用于不需要修改代码的交互场景。
+
+- examples/example_code_generate.py: 演示代码生成完整流程的示例。初始化各组件（VersionManager、LogManager、GitManager等），根据用户需求选择相关文件，生成提示词，使用CodeEngineer处理代码修改，并通过Git提交和推送更改。
+
+- core/workflow_engine.py: 工作流引擎模块，负责协调系统各组件工作。包含WorkflowEngine类和WorkflowEngineConfig数据类，根据用户需求决策是进行代码修改还是对话流程，管理AI配置、Git管理、日志管理和版本控制等核心功能。
+
+- core/decision_environment.py: 决策环境模块，用于分析用户需求类型并确定处理流程。包含DecisionResult数据类和DecisionEnvironment类，通过AI分析用户输入判断是需要修改代码还是仅回答问题，为AI助手提供决策工具。
+
+- core/chat_processor.py: 聊天处理模块，负责非代码修改类的用户交互。提供ChatProcessorConfig和ChatProcessor类，处理用户问题并使用上下文提供有针对性回答，记录聊天互动日志。适用于咨询和澄清类请求。
+
+- core/code_engineer.py: 代码工程师模块，处理需要修改代码的用户需求。包含CodeEngineerConfig和CodeEngineer类，与AI模型交互、解析diff并修改文件，还提供处理失败文件的重试机制。使用LogManager记录交互日志。
+
+- core/ai.py: AI助手模块，负责与AI模型交互。包含AIConfig数据类和AIAssistant类，提供语言模型初始化、工具添加和响应生成功能，支持使用工具的代理模式和简单对话模式，附带流式输出支持。
+
+- core/log_manager.py: 日志管理器，记录和检索代码生成的历史日志。管理按轮次组织的系统提示、用户提示和AI回复，提供当前轮次和历史日志检索功能。
+
+- core/git_manager.py: Git管理器，处理代码仓库的各种Git操作。支持分支创建、切换、提交、推送、拉取，以及版本回退、仓库克隆等功能，提供Issue分支命名。
+
+- core/version_manager.py: 版本管理模块，负责代码生成的版本控制和历史追踪。提供历史轮次日志提取、版本回退分析与执行功能。包含VersionInfo类和VersionManager类，与GitManager交互实现版本控制，并为AI助手提供版本管理工具。
+
+- generate.py: 主入口脚本，展示两种工作流方式：基于决策环境的工作流和现有工作流。包含示例用户需求处理过程，演示如何使用WorkflowEngine处理用户对话和代码生成功能。
+
+
+# 文件内容
+
+
+
+```
+File: examples/example_chat_process.py
+1 """
+2 这个示例展示如何使用ChatProcessor处理用户对话需求
+3 与example_generate.py不同之处在于：
+4 1. 不需要使用版本管理
+5 2. 使用ChatProcessor替代CodeEngineer
+6 """
+7 
+8 import os
+9 
+10 from dotenv import load_dotenv
+11 
+12 from core.ai import AIConfig
+13 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+14 from core.file_memory import FileMemory, FileMemoryConfig
+15 from core.file_selector import FileSelector
+16 from core.git_manager import GitManager, GitConfig
+17 from core.log_manager import LogManager, LogConfig
+18 
+19 
+20 def main():
+21     # 加载环境变量
+22     load_dotenv()
+23     
+24     # 创建工作目录
+25     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+26 
+27     issue_id = 5  # 使用一个新的issue_id
+28     
+29     # 初始化日志管理器
+30     log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
+31     log_manager = LogManager(config=log_config)
+32     current_round = log_manager.get_current_round()
+33 
+34     
+35     # 初始化Git管理器
+36     git_config = GitConfig(
+37         repo_path=project_dir
+38     )
+39     git_manager = GitManager(config=git_config)
+40     branch_name = git_manager.get_issues_branch_name(issue_id, current_round)
+41     
+42     # 初始化AI助手
+43     ai_config = AIConfig(
+44         model_name="coder-model",
+45         temperature=1
+46     )
+47     
+48     current_requirement = '''
+49     请详细解释下工作流引擎(workflow_engine)在本项目中的作用，以及它是如何协调各个组件工作的
+50     '''
+51 
+52     if current_round > 1:
+53         file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
+54         file_memory.update_file_details()
+55 
+56     git_manager.switch_branch(branch_name, True)
+57 
+58     selector = FileSelector(
+59         project_dir,
+60         issue_id,
+61         ai_config=ai_config,
+62     )
+63 
+64     # 选择相关文件来提供上下文
+65     files = selector.select_files_for_requirement(current_requirement)
+66     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+67 
+68     # 使用ChatProcessor处理用户请求
+69     chat_config = ChatProcessorConfig(
+70         system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。"
+71     )
+72     chat_processor = ChatProcessor(ai_config=ai_config, log_manager=log_manager, config=chat_config)
+73     
+74     print(chat_processor.process_chat(current_requirement))
+75 
+76 
+77 if __name__ == "__main__":
+78     main()
+79
+```
+
+
+
+
+```
+File: examples/example_code_generate.py
+1 import os
+2 
+3 from dotenv import load_dotenv
+4 
+5 from core.ai import AIConfig
+6 from core.code_engineer import CodeEngineerConfig, CodeEngineer
+7 from core.diff import Diff
+8 from core.file_memory import FileMemory, FileMemoryConfig
+9 from core.file_selector import FileSelector
+10 from core.git_manager import GitManager, GitConfig
+11 from core.log_manager import LogManager, LogConfig
+12 from core.prompt_generator import PromptGenerator, PromptData
+13 from core.version_manager import VersionManager
+14 
+15 
+16 def main():
+17     # 加载环境变量
+18     load_dotenv()
+19     
+20     # 创建工作目录
+21     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+22 
+23     issue_id = 3
+24     
+25     # 初始化日志管理器
+26     log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
+27     log_manager = LogManager(config=log_config)
+28     current_round = log_manager.get_current_round()
+29 
+30     
+31     # 初始化Git管理器
+32     git_config = GitConfig(
+33         repo_path=project_dir
+34     )
+35     git_manager = GitManager(config=git_config)
+36     branch_name = git_manager.get_issues_branch_name(issue_id, current_round)
+37     
+38     # 初始化AI助手
+39     ai_config = AIConfig(
+40         model_name="coder-model",
+41         temperature=1
+42     )
+43     
+44     # 初始化版本管理器
+45     version_manager = VersionManager(issue_id=issue_id, log_manager=log_manager, git_manager=git_manager, ai_config=ai_config)
+46 
+47     current_requirement = '''
+48     将 example_chat_process.py 和 example_code_generate.py的流程整合到 workflow_engine.py 中，目前两个代码文件都是写代码和回复用户的完整流程。
+49     使用DecisionEnvironment来决策选择何种模式。
+50     '''
+51     requirement, history = version_manager.ensure_version_and_generate_context(current_requirement)
+52 
+53     if current_round > 1:
+54         file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
+55         file_memory.update_file_details()
+56 
+57     git_manager.switch_branch(branch_name, True)
+58 
+59     selector = FileSelector(
+60         project_dir,
+61         issue_id,
+62         ai_config=ai_config,
+63     )
+64 
+65     files = selector.select_files_for_requirement(requirement)
+66 
+67     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+68 
+69     data = PromptData(requirement=requirement, project_dir=project_dir, steps = history, files=files, file_desc=descriptions)
+70     user_prompt = PromptGenerator.generatePrompt(data)
+71     config = CodeEngineerConfig(project_dir=project_dir, ai_config=ai_config)
+72 
+73     engineer = CodeEngineer(config, LogManager(LogConfig(project_dir=project_dir, issue_id=issue_id)), Diff(AIConfig(temperature=0.1,
+74                                                                                                               model_name="gpt-4o")))
+75     engineer.process_prompt(prompt=user_prompt)
+76 
+77     #未实现chat_processor的功能
+78 
+79     git_manager.commit(f"issues#{issue_id}-generate by Bella-Issues-Bot")
+80 
+81 
+82     git_manager.push(branch=branch_name, force=True)
+83 
+84 if __name__ == "__main__":
+85     main()
+86
+```
+
+
+
+
+```
+File: core/workflow_engine.py
+1 import logging
+2 from dataclasses import dataclass
+3 from typing import Optional, Tuple, Union
+4 
+5 from core.ai import AIAssistant, AIConfig
+6 from core.git_manager import GitManager, GitConfig
+7 from core.log_manager import LogManager, LogConfig
+8 from core.prompt_generator import PromptGenerator, PromptData
+9 from core.version_manager import VersionManager
+10 from core.code_engineer import CodeEngineer, CodeEngineerConfig
+11 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+12 
+13 from core.decision_environment import DecisionEnvironment, DecisionResult
+14 
+15 logger = logging.getLogger(__name__)
+16 
+17 @dataclass
+18 class WorkflowEngineConfig:
+19     project_dir: str
+20     issue_id:int
+21     core_model:str = "gpt-4o"
+22     data_model:str = "gpt-4o"
+23     core_template: int = 0.7
+24     data_template: int = 0.7
+25     base_url: Optional[str] = None
+26     api_key: Optional[str] = None
+27     github_remote_url: Optional[str] =None
+28     github_token: Optional[str] = None
+29 
+30 
+31 class WorkflowEngine:
+32     """
+33     工作流引擎，协调版本管理、日志管理和AI交互
+34     """
+35     def __init__(self, config: WorkflowEngineConfig):
+36         """
+37         初始化工作流引擎
+38         
+39         Args:
+40             config: 工作流配置
+41         """
+42         self.config = config
+43         
+44         # 创建AI配置
+45         self.core_ai_config = AIConfig(
+46             model_name=config.core_model,
+47             temperature=config.core_template,
+48             base_url=config.base_url,
+49             api_key=config.api_key
+50         )
+51         
+52         self.data_ai_config = AIConfig(
+53             model_name=config.data_model,
+54             temperature=config.data_template,
+55             base_url=config.base_url,
+56             api_key=config.api_key
+57         )
+58         
+59         # 创建Git配置
+60         self.git_config = GitConfig(
+61             repo_path=config.project_dir,
+62             remote_url=config.github_remote_url,
+63             auth_token=config.github_token
+64         )
+65         
+66         # 创建日志配置
+67         self.log_config = LogConfig(
+68             project_dir=config.project_dir,
+69             issue_id=config.issue_id
+70         )
+71         
+72         # 初始化管理器
+73         self.log_manager = LogManager(config=self.log_config)
+74         self.git_manager = GitManager(config=self.git_config)
+75         self.version_manager = VersionManager(
+76             issue_id=config.issue_id,
+77             ai_config=self.core_ai_config,
+78             log_manager=self.log_manager,
+79             git_manager=self.git_manager
+80         )
+81         
+82         # 初始化代码工程师
+83         self.code_engineer_config = CodeEngineerConfig(
+84             project_dir=config.project_dir,
+85             ai_config=self.core_ai_config
+86         )
+87         
+88         # 初始化聊天处理器
+89         self.chat_processor = ChatProcessor(
+90             ai_config=self.core_ai_config,
+91             log_manager=self.log_manager,
+92             version_manager=self.version_manager,
+93             config=ChatProcessorConfig()
+94         )
+95 
+96         # 初始化代码工程师 - 在实际使用时才创建，避免不必要的对象创建
+97         
+98         # 初始化决策环境
+99         self.decision_env = DecisionEnvironment(
+100             ai_config=self.core_ai_config,
+101             version_manager=self.version_manager
+102         )
+103     
+104     def process_requirement(self, user_requirement: str) -> Tuple[bool, str, DecisionResult]:
+105         """
+106         处理用户需求
+107         
+108         Args:
+109             user_requirement: 用户需求
+110             
+111         Returns:
+112             Tuple[bool, str, DecisionResult]: 处理成功标志、回复内容和决策结果
+113         """
+114         # 先通过决策环境分析需求类型
+115         decision_result = self.decision_env.analyze_requirement(user_requirement)
+116         
+117         logger.info(f"决策结果: 需要修改代码={decision_result.needs_code_modification}, "
+118                     f"理由={decision_result.reasoning}")
+119         
+120         if decision_result.needs_code_modification:
+121             # 代码修改流程
+122             from core.diff import Diff
+123             
+124             # 延迟创建代码工程师对象
+125             code_engineer = CodeEngineer(
+126                 config=self.code_engineer_config,
+127                 log_manager=self.log_manager,
+128                 diff=Diff(self.data_ai_config)
+129             )
+130             
+131             # 在实际实现中，这里应该有更多的逻辑来处理代码修改流程
+132             return True, "执行了代码修改流程 (这是示例响应，实际需实现完整流程)", decision_result
+133         else:
+134             # 对话流程
+135             response = self.chat_processor.process_chat(user_requirement)
+136             return True, response, decision_result
+137
+```
+
+
+
+
+```
+File: core/decision_environment.py
+1 """
+2 决策环境模块，用于分析用户需求类型并确定处理流程。
+3 
+4 该模块主要功能：
+5 1. 分析用户输入的需求是否需要修改代码
+6 2. 根据分析结果决定使用代码修改流程还是对话流程
+7 3. 为AI助手提供决策工具
+8 """
+9 
+10 import logging
+11 from dataclasses import dataclass
+12 from typing import Optional, List, Dict, Any
+13 
+14 from langchain_core.tools import StructuredTool
+15 from pydantic import BaseModel, Field
+16 
+17 from core.ai import AIAssistant, AIConfig
+18 from core.version_manager import VersionManager
+19 
+20 logger = logging.getLogger(__name__)
+21 
+22 
+23 @dataclass
+24 class DecisionResult:
+25     """存储决策结果信息"""
+26     needs_code_modification: bool
+27     reasoning: str
+28 
+29 
+30 class DecisionEnvironment:
+31     """
+32     决策环境类，用于确定用户需求是代码修改还是对话
+33     """
+34     
+35     def __init__(self, ai_config: AIConfig, version_manager: VersionManager):
+36         """
+37         初始化决策环境
+38         
+39         Args:
+40             ai_config: AI配置信息
+41             version_manager: 版本管理器实例
+42         """
+43         self.version_manager = version_manager
+44         self.ai_assistant = AIAssistant(
+45             config=ai_config, 
+46             tools=[self._create_requirement_analyzer_tool()]
+47         )
+48 
+49     def analyze_requirement(self, user_requirement: str) -> DecisionResult:
+50         """
+51         分析用户需求类型
+52         
+53         Args:
+54             user_requirement: 用户输入的需求
+55             
+56         Returns:
+57             DecisionResult: 决策结果
+58         """
+59         # 只有当轮次大于1时，才需要进行决策分析
+60         if self.version_manager.current_round_num <= 1:
+61             # 首轮默认是代码修改需求
+62             return DecisionResult(
+63                 needs_code_modification=True,
+64                 reasoning="首轮交互默认为代码修改需求"
+65             )
+66 
+67         # 获取历史上下文
+68         history_context = self.version_manager.get_formatted_history()
+69         
+70         # 构建提示词
+71         prompt = f"""
+72 # 任务
+73 你需要分析用户的需求是否需要修改代码，还是只需要回答问题。
+74 
+75 # 历史上下文
+76 {history_context}
+77 
+78 # 当前用户需求
+79 {user_requirement}
+80 
+81 # 决策步骤
+82 1. 仔细阅读用户当前的需求
+83 2. 分析需求是否包含代码修改、新增功能、修复bug等要求
+84 3. 如果用户只是提问、咨询、请求解释或澄清，则判断为不需要修改代码
+85 4. 如果需要修改代码，请考虑是否需要对原需求进行明确化或补充
+86 
+87 请使用requirement_analyzer工具返回决策结果。
+88 """
+89 
+90         # 发送给AI进行分析
+91         response = self.ai_assistant.generate_response(prompt, use_tools=True)
+92         
+93         # 如果没有得到有效决策，默认为需要修改代码
+94         if not isinstance(response, dict) or 'needs_code_modification' not in response:
+95             logger.warning("未获取到有效决策结果，默认为需要修改代码")
+96             return DecisionResult(
+97                 needs_code_modification=True,
+98                 reasoning="无法确定需求类型，默认为代码修改"
+99             )
+100             
+101         return DecisionResult(
+102             needs_code_modification=response['needs_code_modification'],
+103             reasoning=response['reasoning']
+104         )
+105 
+106     class _RequirementAnalyzerSchema(BaseModel):
+107         needs_code_modification: bool = Field(
+108             ..., 
+109             description="是否需要修改代码"
+110         )
+111         reasoning: Optional[str] = Field(
+112             None,
+113             description="决策理由"
+114         )
+115 
+116     def _create_requirement_analyzer_tool(self) -> StructuredTool:
+117         """创建需求分析工具"""
+118         return StructuredTool.from_function(
+119             name="requirement_analyzer",
+120             description="分析用户需求是否需要修改代码的工具",
+121             func=lambda **kwargs: kwargs,
+122             args_schema=self._RequirementAnalyzerSchema
+123         )
+124
+```
+
+
+
+
+```
+File: core/chat_processor.py
+1 """
+2 聊天处理模块，负责非代码修改类的用户交互。
+3 
+4 该模块提供以下功能:
+5 1. 处理用户的问题、咨询和澄清请求
+6 2. 使用上下文信息提供有针对性的回答
+7 3. 记录聊天互动日志
+8 """
+9 
+10 import logging
+11 from copy import copy
+12 from dataclasses import dataclass
+13 from typing import Optional
+14 
+15 from core.ai import AIAssistant, AIConfig
+16 from core.log_manager import LogManager
+17 
+18 logger = logging.getLogger(__name__)
+19 
+20 @dataclass
+21 class ChatProcessorConfig:
+22     """聊天处理器配置"""
+23     system_prompt: str = "你是一个专业的开发助手，负责回答用户关于项目的问题和提供技术支持。下面会给出用户需求相关的代码和文档，以及历史迭代信息。"
+24 
+25 
+26 class ChatProcessor:
+27     """
+28     聊天处理器，处理非代码修改类需求
+29     """
+30 
+31     def __init__(self, 
+32                  ai_config: AIConfig, 
+33                  log_manager: LogManager,
+34                  config: Optional[ChatProcessorConfig] = None):
+35         """
+36         初始化聊天处理器
+37         
+38         Args:
+39             ai_config: AI配置信息
+40             log_manager: 日志管理器
+41             version_manager: 版本管理器（可选）
+42             config: 聊天处理器配置
+43         """
+44         self.config = config or ChatProcessorConfig()
+45         self.log_manager = log_manager
+46         
+47         # 设置系统提示词
+48         self.ai_config = copy(ai_config)
+49         self.ai_config.sys_prompt = self.config.system_prompt
+50         self.ai_assistant = AIAssistant(config=self.ai_config)
+51 
+52     def process_chat(self, user_query: str) -> str:
+53         """
+54         处理用户的聊天请求
+55         
+56         Args:
+57             user_query: 用户的问题或请求
+58             
+59         Returns:
+60             str: AI助手的回答
+61         """
+62         
+63         # 生成回答
+64         response = self.ai_assistant.generate_response(user_query)
+65         
+66         # 记录日志
+67         self.log_manager.archive_logs(
+68             sys_prompt=self.config.system_prompt,
+69             prompt=user_query,
+70             response=response
+71         )
+72         
+73         return response
+74
+```
+
+
+
+
+```
+File: core/code_engineer.py
+1 import logging
+2 import os
+3 from copy import copy
+4 from dataclasses import dataclass
+5 from typing import List
+6 
+7 from dotenv import load_dotenv
+8 from typing_extensions import Optional
+9 from core.ai import AIAssistant, AIConfig
+10 from core.diff import Diff
+11 from core.log_manager import LogManager, LogConfig
+12 
+13 logger = logging.getLogger(__name__)
+14 
+15 
+16 @dataclass
+17 class CodeEngineerConfig:
+18     """代码工程师配置"""
+19     project_dir: str
+20     ai_config: AIConfig
+21     system_prompt: Optional[str] = None
+22     max_retries: int = 3
+23 
+24 
+25 class CodeEngineer:
+26     """
+27     代码工程师类，负责处理用户的 prompt，与 AI 模型交互，解析 diff 并修改文件
+28     """
+29 
+30     def __init__(self, config: CodeEngineerConfig, log_manager: LogManager, diff: Diff):
+31         """
+32         初始化代码工程师
+33 
+34         Args:
+35             config: CodeEngineerConfig 实例，包含必要的配置信息
+36             log_manager: LogManager 实例，用于日志管理
+37         """
+38         self.config = config
+39         self.log_manager = log_manager
+40         self.diff = diff
+41 
+42 
+43         if config.system_prompt:
+44             self.system_prompt = config.system_prompt
+45         else:
+46             # 读取系统提示词
+47             self.system_prompt = self._read_system_prompt()
+48 
+49         self.ai_config = copy(config.ai_config)
+50         self.ai_config.sys_prompt = self.system_prompt
+51         self.ai_assistant = AIAssistant(config=self.ai_config)
+52         # 用于存储处理失败的文件
+53         self.failed_files = []
+54 
+55     def _read_system_prompt(self) -> str:
+56         """
+57         读取系统提示词
+58 
+59         Returns:
+60             str: 系统提示词内容
+61         """
+62         try:
+63             system_prompt_path = os.path.join(self.config.project_dir, "system.txt")
+64             if os.path.exists(system_prompt_path):
+65                 with open(system_prompt_path, "r", encoding="utf-8") as f:
+66                     return f.read()
+67             else:
+68                 logger.warning(f"系统提示词文件不存在: {system_prompt_path}，使用默认提示词")
+69                 return "You will get instructions for code to write. Output requested code changes in the unified git diff syntax."
+70         except Exception as e:
+71             logger.error(f"读取系统提示词失败: {str(e)}")
+72             return "You will get instructions for code to write. Output requested code changes in the unified git diff syntax."
+73 
+74     def process_prompt(self, prompt: str) ->  tuple[bool, Optional[str]]:
+75         """
+76         处理用户的 prompt，与 AI 模型交互，解析 diff 并修改文件
+77 
+78         Args:
+79             prompt: 用户的 prompt
+80 
+81         Returns:
+82             bool: 处理是否成功
+83             str: 模型返回结果
+84         """
+85         try:
+86             # 重置失败文件列表
+87             self.failed_files = []
+88             
+89             # 设置 AI 助手的系统提示词
+90             self.ai_assistant.config.sys_prompt = self.system_prompt
+91             
+92             # 调用 AI 模型生成响应
+93             response = self.ai_assistant.generate_response(prompt)
+94             
+95             # 解析响应中的 diff
+96             diffs = Diff.parse_diffs_from_text(response)
+97             
+98             if not diffs:
+99                 logger.warning("未找到有效的 diff")
+100                 return (False, None)
+101             
+102             # 处理每个 diff
+103             self.failed_files = self.diff.process_diffs(diffs, self.config.project_dir)
+104             
+105             # 归档日志
+106             self.log_manager.archive_logs(
+107                 sys_prompt=self.system_prompt,
+108                 prompt=prompt,
+109                 response=response
+110             )
+111             
+112             # 如果有失败的文件，可以在这里处理
+113             if self.failed_files:
+114                 logger.warning(f"有 {len(self.failed_files)} 个文件处理失败")
+115                 # 这里可以添加失败文件的重试逻辑，但根据需求，暂时不实现
+116                 return (False, response)
+117             
+118             return (True, response)
+119         except Exception as e:
+120             logger.error(f"处理 prompt 失败: {str(e)}")
+121             return (False, None)
+122 
+123     def retry_failed_files(self, ) -> bool:
+124         """
+125         重试处理失败的文件（钩子方法，暂不实现具体逻辑）
+126 
+127         Args:
+128             prompt: 用户的 prompt
+129 
+130         Returns:
+131             bool: 重试是否成功
+132         """
+133         # 这是一个钩子方法，用于未来扩展
+134         # 根据需求，暂时不实现具体逻辑
+135 
+136         return False
+137 
+138 if __name__ == "__main__":
+139     load_dotenv()
+140     prompt = '''
+141     '''
+142     config = CodeEngineerConfig(project_dir="../.", ai_config=AIConfig(
+143         temperature=1,
+144         model_name="claude-3.7-sonnet"
+145     ))
+146 
+147     engineer = CodeEngineer(config, LogManager(LogConfig("../.", 1)), Diff(AIConfig(temperature=0.1,
+148                                                                                  model_name="gpt-4o")))
+149     engineer.process_prompt(prompt)
+150
+```
+
+
+
+
+```
+File: core/ai.py
+1 import logging
+2 from dataclasses import dataclass
+3 from typing import Any, List, Optional
+4 
+5 from dotenv import load_dotenv
+6 from langchain.agents import AgentExecutor, create_openai_tools_agent
+7 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+8 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+9 from langchain_core.runnables.base import RunnableSequence
+10 from langchain_core.tools import BaseTool, Tool
+11 from langchain_openai import ChatOpenAI
+12 
+13 logger = logging.getLogger(__name__)
+14 
+15 
+16 @dataclass
+17 class AIConfig:
+18     model_name: str = "gpt-4o"
+19     temperature: float = 0.7
+20     verbose: bool = True
+21     max_retries: int = 3
+22     request_timeout: int = 180
+23     sys_prompt: str = "You are a helpful AI assistant."
+24     base_url: Optional[str] = None
+25     api_key: Optional[str] = None
+26 
+27 
+28 class AIAssistant:
+29     """AI 助手类，负责与 AI 模型交互"""
+30 
+31     def __init__(self, config: AIConfig, tools: Optional[List[BaseTool]] = None):
+32         """
+33         初始化 AI 助手
+34 
+35         Args:
+36             config: AIConfig 实例，包含必要的配置信息
+37             tools: 可选的工具列表
+38         """
+39         self.config = config
+40         self.tools = tools or []
+41         self.llm = self._init_llm()
+42         self.agent = None
+43 
+44         # Initialize agent if tools are provided
+45         if self.tools:
+46             self.agent = self._init_agent()
+47 
+48     def _init_llm(self) -> ChatOpenAI:
+49         """Initialize the language model"""
+50         callbacks = [StreamingStdOutCallbackHandler()] if self.config.verbose else None
+51         
+52         return ChatOpenAI(
+53             base_url=self.config.base_url,
+54             api_key=self.config.api_key,
+55             model=self.config.model_name,
+56             temperature=self.config.temperature,
+57             timeout=self.config.request_timeout,
+58             max_retries=self.config.max_retries,
+59             callbacks=callbacks,
+60         )
+61 
+62     def _init_agent(self) -> AgentExecutor:
+63         """Initialize the agent with tools"""
+64         # 创建提示模板
+65         prompt = ChatPromptTemplate.from_messages([
+66             ("system", self.config.sys_prompt),
+67             ("human", "{input}"),
+68             MessagesPlaceholder(variable_name="agent_scratchpad"),
+69         ])
+70 
+71         # 创建代理
+72         agent = create_openai_tools_agent(self.llm, self.tools, prompt)
+73         
+74         # 创建代理执行器
+75         return AgentExecutor(
+76             agent=agent, 
+77             tools=self.tools, 
+78             verbose=self.config.verbose,
+79             max_iterations=5,
+80             handle_parsing_errors=True
+81         )
+82 
+83     def _create_simple_chain(self) -> RunnableSequence:
+84         """创建简单的对话链，不使用工具"""
+85         from langchain_core.prompts import ChatPromptTemplate
+86         
+87         # 创建提示模板
+88         prompt = ChatPromptTemplate.from_messages([
+89             ("system", self.config.sys_prompt),
+90             ("human", "{input}")
+91         ])
+92         
+93         # 创建简单链
+94         chain = prompt | self.llm | (lambda x: x.content)
+95         
+96         return chain
+97 
+98     def add_tool(self, tool: BaseTool) -> None:
+99         """
+100         添加工具
+101 
+102         Args:
+103             tool: 要添加的工具
+104         """
+105         # 检查是否已经有同名工具
+106         for existing_tool in self.tools:
+107             if existing_tool.name == tool.name:
+108                 # 替换同名工具
+109                 self.tools.remove(existing_tool)
+110                 break
+111                 
+112         # 添加新工具
+113         self.tools.append(tool)
+114         
+115         # 重新初始化代理
+116         self.agent = self._init_agent()
+117 
+118     def generate_response(
+119         self, prompt: str, use_tools: bool = False, **kwargs: Any
+120     ) -> str:
+121         """
+122         生成响应
+123 
+124         Args:
+125             prompt: 用户的提示词
+126             use_tools: 是否使用工具
+127             **kwargs: 其他参数
+128 
+129         Returns:
+130             str: 生成的响应
+131         """
+132         try:
+133             if use_tools and self.tools:
+134                 # 确保代理已初始化
+135                 if self.agent is None:
+136                     self.agent = self._init_agent()
+137                     
+138                 # 使用代理生成响应
+139                 response = self.agent.invoke({"input": prompt})
+140                 return response["output"]
+141             else:
+142                 # 使用简单链生成响应，始终使用流式输出
+143                 chain = self._create_simple_chain()
+144                 
+145                 # 使用流式输出
+146                 response_chunks = []
+147                 for chunk in chain.stream({"input": prompt}):
+148                     response_chunks.append(chunk)
+149                 
+150                 # response_chunks 连接起来就是完整的响应结果
+151                 return "".join(response_chunks)
+152         except Exception as e:
+153             logger.error(f"生成响应时出错: {str(e)}")
+154             raise
+155 
+156 
+157 def create_example_tool() -> Tool:
+158     """Create an example tool for demonstration"""
+159 
+160     def calculator(expression: str) -> str:
+161         try:
+162             return str(eval(expression))
+163         except Exception as e:
+164             return f"Error calculating: {str(e)}"
+165 
+166     return Tool(
+167         name="calculator",
+168         description="Useful for performing mathematical calculations. Input should be a mathematical expression.",
+169         func=calculator,
+170         return_direct=True,
+171     )
+172 
+173 
+174 if __name__ == "__main__":
+175     load_dotenv()
+176     # Initialize the assistant with a tool
+177     assistant = AIAssistant(
+178         config=AIConfig(
+179             temperature=0.7,
+180         ),
+181         tools=[create_example_tool()],
+182     )
+183 
+184     response = assistant.generate_response("What is 15 * 7?", use_tools=True)
+185     print(f"Response: {response}")
+186
+```
+
+
+
+
+```
+File: core/log_manager.py
+1 import datetime
+2 import logging
+3 import os
+4 from dataclasses import dataclass, field
+5 from typing import List, Optional
+6 
+7 logger = logging.getLogger(__name__)
+8 
+9 
+10 @dataclass
+11 class LogConfig:
+12     """日志管理配置"""
+13 
+14     project_dir: str
+15     issue_id: int
+16     issues_dir: str = "memory/issues"
+17     base_dir: str = ".eng"
+18 
+19 
+20 @dataclass
+21 class LogEntry:
+22     """存储单次代码生成日志的数据类"""
+23     issue_id: int
+24     round_num: int
+25     sys_prompt: str
+26     prompt: str
+27     response: str
+28     timestamp: str = field(default_factory=lambda: datetime.datetime.now().isoformat())
+29     log_path: str = ""
+30 
+31 
+32 class LogManager:
+33     """管理代码生成日志的存档和检索"""
+34 
+35     def __init__(self, config: LogConfig):
+36         """
+37         初始化日志管理器
+38 
+39         Args:
+40             config: LogConfig实例，包含必要的配置信息
+41         """
+42         self.config = config
+43         self.issue_id = self.config.issue_id
+44         self.issues_path = os.path.join(
+45             self.config.project_dir, self.config.base_dir, self.config.issues_dir, "#" + str(self.issue_id)
+46         )
+47 
+48         # 初始化当前轮次
+49         self.current_round = self._get_next_round()
+50 
+51         # 确保必要的目录存在
+52         os.makedirs(self.issues_path, exist_ok=True)
+53 
+54         # 定义日志文件名常量
+55         self.SYS_PROMPT_FILE = "system_prompt.txt"
+56         self.USER_PROMPT_FILE = "user_prompt.txt"
+57         self.AI_RESPONSE_FILE = "ai_response.txt"
+58         self.TIMESTAMP_FILE = "timestamp.txt"
+59 
+60     def archive_logs(self, sys_prompt: str, prompt: str, response: str) -> str:
+61         """
+62         将代码生成日志存档到指定的目录
+63 
+64         Args:
+65             issue_id: GitHub issue的ID
+66             sys_prompt: 系统提示词
+67             prompt: 用户提示词
+68             response: AI响应
+69 
+70         Returns:
+71             str: 存档目录的路径
+72         """
+73         # 获取下一个轮次号
+74 
+75         round_num = self.current_round
+76 
+77         # 获取当前时间戳
+78         timestamp = datetime.datetime.now().isoformat()
+79         
+80         # 创建轮次目录
+81         round_dir = os.path.join(self.issues_path, f"round_{round_num}")
+82         os.makedirs(round_dir, exist_ok=True)
+83         
+84         # 保存系统提示词
+85         with open(os.path.join(round_dir, self.SYS_PROMPT_FILE), "w", encoding="utf-8") as f:
+86             f.write(sys_prompt)
+87         
+88         # 保存用户提示词
+89         with open(os.path.join(round_dir, self.USER_PROMPT_FILE), "w", encoding="utf-8") as f:
+90             f.write(prompt)
+91         
+92         # 保存AI响应
+93         with open(os.path.join(round_dir, self.AI_RESPONSE_FILE), "w", encoding="utf-8") as f:
+94             f.write(response)
+95             
+96         # 保存时间戳
+97         with open(os.path.join(round_dir, self.TIMESTAMP_FILE), "w", encoding="utf-8") as f:
+98             f.write(timestamp)
+99         
+100         # 记录日志
+101         logger.info(f"已将日志存档至: {round_dir}")
+102         
+103         # 返回存档目录的路径
+104         return round_dir
+105 
+106     def _get_next_round(self) -> int:
+107         """
+108         获取下一个轮次号
+109 
+110         Returns:
+111             int: 下一个轮次号
+112         """
+113         issue_path = self.issues_path
+114         if not os.path.exists(issue_path):
+115             return 1
+116 
+117         existing_rounds = [
+118             int(d[6:])
+119             for d in os.listdir(issue_path)
+120             if os.path.isdir(os.path.join(issue_path, d)) and (d[6:]).isdigit()
+121         ]
+122 
+123         return max(existing_rounds, default=0) + 1
+124 
+125     def get_current_round(self) -> int:
+126         return self.current_round
+127         
+128     def get_issue_log_entries(self) -> List[LogEntry]:
+129         """
+130         获取当前issue的所有轮次的日志条目
+131 
+132         Returns:
+133             List[LogEntry]: 日志条目列表，按轮次排序
+134         """
+135         
+136         log_entries = []
+137 
+138         issue_dir = self.issues_path
+139         # 遍历所有轮次目录
+140         for dir_name in os.listdir(issue_dir):
+141             if not dir_name.startswith("round_"):
+142                 continue
+143                 
+144             try:
+145                 round_num = int(dir_name[6:])  # 提取轮次号
+146                 round_dir = os.path.join(issue_dir, dir_name)
+147                 
+148                 # 读取系统提示词
+149                 sys_prompt_path = os.path.join(round_dir, self.SYS_PROMPT_FILE)
+150                 with open(sys_prompt_path, "r", encoding="utf-8") as f:
+151                     sys_prompt = f.read()
+152                 
+153                 # 读取用户提示词
+154                 user_prompt_path = os.path.join(round_dir, self.USER_PROMPT_FILE)
+155                 with open(user_prompt_path, "r", encoding="utf-8") as f:
+156                     prompt = f.read()
+157                 
+158                 # 读取AI响应
+159                 ai_response_path = os.path.join(round_dir, self.AI_RESPONSE_FILE)
+160                 with open(ai_response_path, "r", encoding="utf-8") as f:
+161                     response = f.read()
+162                     
+163                 # 读取时间戳
+164                 timestamp_path = os.path.join(round_dir, self.TIMESTAMP_FILE)
+165                 timestamp = datetime.datetime.now().isoformat()  # 默认当前时间
+166                 if os.path.exists(timestamp_path):
+167                     try:
+168                         with open(timestamp_path, "r", encoding="utf-8") as f:
+169                             timestamp = f.read().strip()
+170                     except Exception as e:
+171                         logger.error(f"读取时间戳失败: {str(e)}")
+172                 
+173                 # 创建并添加LogEntry对象
+174                 entry = LogEntry(issue_id=self.issue_id, round_num=round_num,
+175                                  sys_prompt=sys_prompt, prompt=prompt, 
+176                                  response=response, timestamp=timestamp, log_path=round_dir)
+177                 log_entries.append(entry)
+178             except Exception as e:
+179                 logger.error(f"读取轮次 {dir_name} 的日志失败: {str(e)}")
+180         
+181         # 按轮次号排序
+182         return sorted(log_entries, key=lambda entry: entry.round_num)
+183     
+184     def get_issue_round_log_entry(self, round_num: int) -> Optional[LogEntry]:
+185         """
+186         获取特定轮次的日志条目
+187 
+188         Args:
+189             round_num: 轮次号
+190 
+191         Returns:
+192             Optional[LogEntry]: 指定轮次的日志条目，如果不存在则返回None
+193         """
+194         round_dir = os.path.join(self.issues_path, f"#{self.issue_id}", f"round_{round_num}")
+195         
+196         if not os.path.exists(round_dir):
+197             logger.warning(f"Issue #{self.issue_id} 的轮次 {round_num} 不存在")
+198             return None
+199             
+200         try:
+201             # 直接使用现有方法获取所有轮次，然后过滤出指定轮次
+202             all_entries = self.get_issue_log_entries()
+203             return next((entry for entry in all_entries if entry.round_num == round_num), None)
+204         except Exception as e:
+205             logger.error(f"获取 Issue #{self.issue_id} 轮次 {round_num} 的日志失败: {str(e)}")
+206             return None
+207 
+208 if __name__ == "__main__":
+209     config = LogConfig("..", 1)
+210     log_manager = LogManager(config)
+211
+```
+
+
+
+
+```
+File: core/git_manager.py
+1 from dataclasses import dataclass
+2 from typing import Optional, List
+3 import git
+4 import os
+5 import logging
+6 import shutil
+7 from urllib.parse import urlparse, urlunparse
+8 
+9 logger = logging.getLogger(__name__)
+10 
+11 
+12 @dataclass
+13 class GitConfig:
+14     """Git configuration parameters"""
+15 
+16     repo_path: str
+17     remote_name: str = "origin"
+18     default_branch: str = "main"
+19     remote_url: Optional[str] = None
+20     auth_token: Optional[str] = None
+21 
+22 
+23 class GitManager:
+24     """Manages git operations including push, pull, branch creation and switching"""
+25 
+26     def __init__(self, config: GitConfig):
+27         """Initialize GitManager with configuration"""
+28         self.config = config
+29         self.repo = None
+30         self._ensure_repo()
+31 
+32     def _ensure_repo(self) -> None:
+33         """Ensure git repository exists and is properly initialized"""
+34         if not os.path.exists(self.config.repo_path):
+35             if self.config.remote_url:
+36                 self.clone()
+37             else:
+38                 raise ValueError(
+39                     f"Repository path does not exist: {self.config.repo_path}"
+40                 )
+41         else:
+42             try:
+43                 self.repo = git.Repo(self.config.repo_path)
+44                 # Set auth token for remote operations if provided
+45                 if self.config.auth_token and self.config.remote_url:
+46                     self._set_remote_with_auth()
+47             except git.InvalidGitRepositoryError:
+48                 if self.config.remote_url:
+49                     self.clone()
+50                 else:
+51                     raise ValueError(
+52                         f"Invalid git repository at: {self.config.repo_path}"
+53                     )
+54 
+55     def _get_url_with_token(self, url: str) -> str:
+56         """
+57         Insert authentication token into git URL
+58 
+59         Args:
+60             url: Original git URL
+61 
+62         Returns:
+63             URL with authentication token
+64         """
+65         if not self.config.auth_token:
+66             return url
+67 
+68         parsed = urlparse(url)
+69 
+70         # Handle different URL formats
+71         if parsed.scheme in ["http", "https"]:
+72             netloc = f"{self.config.auth_token}@{parsed.netloc}"
+73             return urlunparse(
+74                 (
+75                     parsed.scheme,
+76                     netloc,
+77                     parsed.path,
+78                     parsed.params,
+79                     parsed.query,
+80                     parsed.fragment,
+81                 )
+82             )
+83         elif "@" in url and ":" in url and url.startswith("git@"):
+84             # Handle SSH format: git@github.com:username/repo.git
+85             return url  # Don't modify SSH URLs
+86         else:
+87             return url  # Return original if format is not recognized
+88 
+89     def _set_remote_with_auth(self) -> None:
+90         """Configure remote with authentication token"""
+91         if not self.repo or not self.config.auth_token or not self.config.remote_url:
+92             return
+93 
+94         try:
+95             # Get current remotes
+96             remotes = list(self.repo.remotes)
+97             remote_exists = any(
+98                 remote.name == self.config.remote_name for remote in remotes
+99             )
+100 
+101             # Prepare URL with token
+102             url_with_token = self._get_url_with_token(self.config.remote_url)
+103 
+104             # Set or update remote
+105             if remote_exists:
+106                 self.repo.git.remote("set-url", self.config.remote_name, url_with_token)
+107             else:
+108                 self.repo.git.remote("add", self.config.remote_name, url_with_token)
+109 
+110             logger.info(
+111                 f"Configured remote '{self.config.remote_name}' with authentication"
+112             )
+113         except git.GitCommandError as e:
+114             logger.error(f"Failed to configure remote with authentication: {str(e)}")
+115             raise
+116 
+117     def clone(self) -> None:
+118         """
+119         Clone the repository specified in config
+120 
+121         Raises:
+122             ValueError: If remote_url is not set in config
+123             git.GitCommandError: If clone operation fails
+124         """
+125         if not self.config.remote_url:
+126             raise ValueError("Remote URL must be set to clone a repository")
+127 
+128         self._clone_repo()
+129 
+130     def _clone_repo(self, branch: Optional[str] = None) -> None:
+131         """
+132         Internal method to perform the clone operation
+133 
+134         Args:
+135             branch: Branch to checkout after cloning
+136         """
+137         try:
+138             # Prepare parent directory if it doesn't exist
+139             parent_dir = os.path.dirname(self.config.repo_path)
+140             if parent_dir and not os.path.exists(parent_dir):
+141                 os.makedirs(parent_dir)
+142 
+143             # Remove target directory if it exists
+144             if os.path.exists(self.config.repo_path):
+145                 shutil.rmtree(self.config.repo_path)
+146 
+147             # Prepare URL with token if provided
+148             clone_url = self._get_url_with_token(self.config.remote_url)
+149 
+150             # Clone options
+151             clone_args = {
+152                 "url": clone_url,
+153                 "to_path": self.config.repo_path,
+154             }
+155 
+156             # Add branch if specified
+157             if branch:
+158                 clone_args["branch"] = branch
+159 
+160             # Clone the repository
+161             self.repo = git.Repo.clone_from(**clone_args)
+162 
+163             logger.info(f"Successfully cloned repository to {self.config.repo_path}")
+164 
+165             # Configure remote with auth token if provided
+166             if self.config.auth_token:
+167                 self._set_remote_with_auth()
+168 
+169         except git.GitCommandError as e:
+170             logger.error(f"Failed to clone repository: {str(e)}")
+171             # Clean up if clone failed
+172             if os.path.exists(self.config.repo_path):
+173                 shutil.rmtree(self.config.repo_path)
+174             raise
+175 
+176     def pull(self, branch: Optional[str] = None) -> None:
+177         """
+178         Pull changes from remote repository
+179 
+180         Args:
+181             branch: Branch to pull from. If None, pulls current branch
+182         """
+183         try:
+184             if branch:
+185                 self.repo.git.pull(self.config.remote_name, branch)
+186             else:
+187                 self.repo.git.pull()
+188             logger.info(
+189                 f"Successfully pulled changes from {branch or 'current branch'}"
+190             )
+191         except git.GitCommandError as e:
+192             logger.error(f"Failed to pull changes: {str(e)}")
+193             raise
+194 
+195     def push(
+196         self,
+197         branch: Optional[str] = None,
+198         force: bool = False,
+199         set_upstream: bool = True,
+200     ) -> None:
+201         """
+202         Push changes to remote repository
+203 
+204         Args:
+205             branch: Branch to push. If None, pushes current branch
+206             force: Whether to force push
+207             set_upstream: Whether to set upstream branch if it doesn't exist
+208         """
+209         try:
+210             # 确保远程 URL 包含认证令牌
+211             if self.config.auth_token:
+212                 self._set_remote_with_auth()
+213 
+214             # 如果没有指定分支，获取当前分支
+215             current_branch = branch or self.get_current_branch()
+216 
+217             # 执行推送操作
+218             if force:
+219                 if set_upstream:
+220                     self.repo.git.push(
+221                         "-f", "--set-upstream", self.config.remote_name, current_branch
+222                     )
+223                 else:
+224                     if branch:
+225                         self.repo.git.push("-f", self.config.remote_name, branch)
+226                     else:
+227                         self.repo.git.push("-f")
+228             else:
+229                 if set_upstream:
+230                     self.repo.git.push(
+231                         "--set-upstream", self.config.remote_name, current_branch
+232                     )
+233                 else:
+234                     if branch:
+235                         self.repo.git.push(self.config.remote_name, branch)
+236                     else:
+237                         self.repo.git.push()
+238 
+239             logger.info(f"Successfully pushed changes to {current_branch}")
+240         except git.GitCommandError as e:
+241             logger.error(f"Failed to push changes: {str(e)}")
+242             raise
+243 
+244     def create_branch(
+245         self, branch_name: str, start_point: Optional[str] = None
+246     ) -> None:
+247         """
+248         Create a new branch
+249 
+250         Args:
+251             branch_name: Name of the new branch
+252             start_point: Branch/commit to create branch from. If None, uses current HEAD
+253         """
+254         try:
+255             if start_point:
+256                 self.repo.git.branch(branch_name, start_point)
+257             else:
+258                 self.repo.git.branch(branch_name)
+259             logger.info(f"Successfully created branch: {branch_name}")
+260         except git.GitCommandError as e:
+261             logger.error(f"Failed to create branch: {str(e)}")
+262             raise
+263 
+264     def switch_branch(self, branch_name: str, create: bool = False) -> None:
+265         """
+266         Switch to specified branch
+267 
+268         Args:
+269             branch_name: Name of the branch to switch to
+270             create: Create branch if it doesn't exist
+271         """
+272         try:
+273             if create:
+274                 try:
+275                     self.repo.git.checkout("-b", branch_name)
+276                 except:
+277                     self.repo.git.checkout(branch_name)
+278             else:
+279                 self.repo.git.checkout(branch_name)
+280             logger.info(f"Successfully switched to branch: {branch_name}")
+281         except git.GitCommandError as e:
+282             logger.error(f"Failed to switch branch: {str(e)}")
+283             raise
+284 
+285     def delete_branch(self, branch_name: str, force: bool = False) -> None:
+286         """
+287         Delete specified branch
+288 
+289         Args:
+290             branch_name: Name of the branch to delete
+291             force: Force delete even if branch not fully merged
+292         """
+293         try:
+294             if force:
+295                 self.repo.git.branch("-D", branch_name)
+296             else:
+297                 self.repo.git.branch("-d", branch_name)
+298             logger.info(f"Successfully deleted branch: {branch_name}")
+299         except git.GitCommandError as e:
+300             logger.error(f"Failed to delete branch: {str(e)}")
+301             raise
+302 
+303     def get_current_branch(self) -> str:
+304         """Get name of current branch"""
+305         return self.repo.active_branch.name
+306 
+307     def list_branches(self, remote: bool = False) -> List[str]:
+308         """
+309         List all branches
+310 
+311         Args:
+312             remote: Whether to list remote branches instead of local
+313 
+314         Returns:
+315             List of branch names
+316         """
+317         if remote:
+318             return [ref.name for ref in self.repo.remote().refs]
+319         return [branch.name for branch in self.repo.heads]
+320 
+321     def get_current_commit_id(self) -> str:
+322         """获取当前提交的 ID"""
+323         try:
+324             return self.repo.head.commit.hexsha
+325         except Exception as e:
+326             logger.error(f"获取当前提交 ID 失败: {str(e)}")
+327             return ""
+328 
+329     def get_changed_files(self, old_commit: str, new_commit: str) -> List[str]:
+330         """
+331         获取两个提交之间变更的文件列表
+332 
+333         Args:
+334             old_commit: 旧提交的 ID
+335             new_commit: 新提交的 ID
+336 
+337         Returns:
+338             变更的文件路径列表
+339         """
+340         try:
+341             # 获取提交对象
+342             old = self.repo.commit(old_commit)
+343             new = self.repo.commit(new_commit)
+344 
+345             # 获取差异
+346             diff_index = old.diff(new)
+347 
+348             # 收集所有变更的文件
+349             changed_files = set()
+350 
+351             # 添加修改的文件
+352             for diff in diff_index.iter_change_type("M"):
+353                 if not self.is_ignore(diff.a_path):
+354                     changed_files.add(diff.a_path)
+355 
+356             # 添加增加的文件
+357             for diff in diff_index.iter_change_type("A"):
+358                 if not self.is_ignore(diff.b_path):
+359                     changed_files.add(diff.b_path)
+360 
+361             # 添加删除的文件
+362             for diff in diff_index.iter_change_type("D"):
+363                 if not self.is_ignore(diff.b_path):
+364                     changed_files.add(diff.a_path)
+365 
+366             return list(changed_files)
+367         except Exception as e:
+368             logger.error(f"获取变更文件列表失败: {str(e)}")
+369             return []
+370 
+371     def is_ignore(self, path: str) -> bool:
+372         # 检查文件名是否以点开头
+373         file_name = os.path.basename(path)
+374         if file_name.startswith("."):
+375             return True
+376         # 检查路径中是否包含以点开头的目录
+377         path_parts = path.split(os.path.sep)
+378         for part in path_parts:
+379             # 跳过空字符串（可能出现在路径开头）
+380             if not part:
+381                 continue
+382             # 如果目录名以点开头，则忽略
+383             if part.startswith("."):
+384                 return True
+385 
+386         # 如果不满足任何忽略条件，则不忽略
+387         return False
+388 
+389     def delete_local_repository(self, remove_git_config: bool = False) -> None:
+390         """
+391         删除本地代码仓库和可选的全局 git 配置
+392 
+393         Args:
+394             remove_git_config: 是否同时删除与此仓库相关的全局 git 配置
+395 
+396         Raises:
+397             ValueError: 如果仓库路径不存在
+398             OSError: 如果删除操作失败
+399         """
+400         if not os.path.exists(self.config.repo_path):
+401             logger.warning(f"仓库路径不存在，无需删除: {self.config.repo_path}")
+402             return
+403 
+404         try:
+405             # 关闭仓库连接以释放文件锁
+406             if self.repo:
+407                 self.repo.close()
+408                 self.repo = None
+409 
+410             # 删除本地仓库目录
+411             shutil.rmtree(self.config.repo_path)
+412             logger.info(f"成功删除本地仓库: {self.config.repo_path}")
+413 
+414             # 可选：删除全局 git 配置中与此仓库相关的条目
+415             if remove_git_config:
+416                 self._remove_git_config()
+417 
+418         except (OSError, shutil.Error) as e:
+419             logger.error(f"删除本地仓库失败: {str(e)}")
+420             raise
+421 
+422     def _remove_git_config(self) -> None:
+423         """
+424         从全局 git 配置中删除与当前仓库相关的配置
+425 
+426         这包括：
+427         - 与远程仓库 URL 相关的凭证
+428         - 特定于此仓库的用户配置
+429         """
+430         try:
+431             # 获取仓库的规范路径
+432             repo_path = os.path.abspath(self.config.repo_path)
+433             repo_name = os.path.basename(repo_path)
+434 
+435             # 尝试从 git 配置中删除与此仓库相关的条目
+436             if self.config.remote_url:
+437                 # 解析远程 URL 以获取主机名
+438                 parsed = urlparse(self.config.remote_url)
+439                 if parsed.netloc:
+440                     # 尝试删除凭证
+441                     try:
+442                         git.cmd.Git().execute(
+443                             ["git", "credential", "reject"],
+444                             input=f"url={self.config.remote_url}\n\n",
+445                         )
+446                         logger.info(f"已尝试从凭证存储中删除 {parsed.netloc} 的凭证")
+447                     except git.GitCommandError:
+448                         logger.debug("凭证删除操作未成功，可能没有存储凭证")
+449 
+450             # 尝试删除仓库特定的配置（如果有）
+451             try:
+452                 git.cmd.Git().execute(
+453                     [
+454                         "git",
+455                         "config",
+456                         "--global",
+457                         "--remove-section",
+458                         f"remote.{repo_name}",
+459                     ]
+460                 )
+461                 logger.info(f"已删除全局 git 配置中的 remote.{repo_name} 部分")
+462             except git.GitCommandError:
+463                 logger.debug(f"全局配置中没有 remote.{repo_name} 部分")
+464 
+465             logger.info("已完成 git 配置清理")
+466 
+467         except Exception as e:
+468             logger.warning(f"清理 git 配置时出错: {str(e)}")
+469             # 不抛出异常，因为这是次要操作
+470 
+471     def add_issue_comment(self, issue_number: int, comment_text: str) -> bool:
+472         """
+473         在 GitHub 仓库的指定 Issue 下添加评论
+474 
+475         Args:
+476             issue_number: Issue 编号
+477             comment_text: 评论内容
+478 
+479         Returns:
+480             bool: 操作是否成功
+481 
+482         Raises:
+483             ValueError: 如果未配置认证令牌或远程 URL
+484             Exception: 如果添加评论过程中发生其他错误
+485         """
+486         try:
+487             # 检查必要的配置
+488             if not self.config.auth_token:
+489                 raise ValueError("添加 Issue 评论需要认证令牌 (auth_token)")
+490 
+491             if not self.config.remote_url:
+492                 raise ValueError("添加 Issue 评论需要远程仓库 URL (remote_url)")
+493 
+494             # 导入 PyGithub
+495             try:
+496                 from github import Github
+497             except ImportError:
+498                 raise ImportError("添加 Issue 评论需要安装 PyGithub 库: pip install PyGithub")
+499 
+500             # 解析仓库所有者和名称
+501             parsed_url = urlparse(self.config.remote_url)
+502             path_parts = parsed_url.path.strip("/").split("/")
+503 
+504             if len(path_parts) < 2 or not all(path_parts[:2]):
+505                 raise ValueError(f"无法从 URL 解析仓库所有者和名称: {self.config.remote_url}")
+506 
+507             owner = path_parts[0]
+508             repo_name = path_parts[1]
+509             if repo_name.endswith(".git"):
+510                 repo_name = repo_name[:-4]  # 移除 .git 后缀
+511 
+512             # 初始化 GitHub 客户端
+513             g = Github(self.config.auth_token)
+514 
+515             # 获取仓库和 Issue
+516             repo = g.get_repo(f"{owner}/{repo_name}")
+517             issue = repo.get_issue(issue_number)
+518 
+519             # 添加评论
+520             comment = issue.create_comment(comment_text)
+521 
+522             logger.info(f"成功在 Issue #{issue_number} 下添加评论 (ID: {comment.id})")
+523             return True
+524 
+525         except Exception as e:
+526             logger.error(f"添加 Issue 评论失败: {str(e)}")
+527             raise
+528 
+529     def commit(
+530         self, message: str, add_all: bool = True, files: Optional[List[str]] = None
+531     ) -> str:
+532         """
+533         创建一个新的提交
+534 
+535         Args:
+536             message: 提交信息
+537             add_all: 是否添加所有变更的文件，默认为 True
+538             files: 要添加的特定文件列表，如果 add_all 为 True 则忽略此参数
+539 
+540         Returns:
+541             str: 新提交的 SHA 哈希值
+542 
+543         Raises:
+544             git.GitCommandError: 如果 Git 操作失败
+545         """
+546         try:
+547             # 添加文件到暂存区
+548             if add_all:
+549                 self.repo.git.add(A=True)
+550             elif files:
+551                 for file in files:
+552                     self.repo.git.add(file)
+553 
+554             # 创建提交
+555             commit = self.repo.index.commit(message)
+556             logger.info(f"成功创建提交: {commit.hexsha[:7]} - {message}")
+557 
+558             return commit.hexsha
+559         except git.GitCommandError as e:
+560             logger.error(f"创建提交失败: {str(e)}")
+561             raise
+562 
+563     def get_issues_branch_name(self, issues_id: int, round: int) -> str:
+564         return f"bella-bot-issues-{issues_id}-{round}"
+565 
+566     def reset_to(self, target_branch: str) -> bool:
+567         """
+568         将当前分支重置到远程目标分支的状态
+569 
+570         Args:
+571             target_branch: 目标分支名称
+572 
+573         Returns:
+574             bool: 操作是否成功
+575         """
+576         try:
+577             # 获取远程分支
+578             remote_branches = self.list_branches(remote=True)
+579 
+580             # 检查目标分支是否存在于远端
+581             if target_branch not in remote_branches:
+582                 logger.warning(f"目标分支 {target_branch} 不存在于远端")
+583                 return False
+584             
+585             # 切换到目标分支，如果不存在则创建
+586             logger.info(f"切换到分支: {target_branch}")
+587             self.switch_branch(target_branch, create=True)
+588             
+589             # 拉取最新代码
+590             logger.info(f"拉取远程分支: {target_branch} 的最新代码")
+591             self.pull()
+592             
+593             # 强制重置到远程分支状态
+594             remote_name = self.config.remote_name
+595             logger.info(f"重置到远程分支: {remote_name}/{target_branch}")
+596             self.repo.git.reset(f"{remote_name}/{target_branch}", hard=True)
+597 
+598             logger.info(f"成功重置到版本: {target_branch}")
+599             return True
+600         except git.GitCommandError as e:
+601             logger.error(f"重置到分支 {target_branch} 失败: {str(e)}")
+602             return False
+603         except Exception as e:
+604             logger.error(f"重置过程中发生未知错误: {str(e)}")
+605             return False
+606
+```
+
+
+
+
+```
+File: core/version_manager.py
+1 """
+2 版本管理模块，处理代码生成的版本控制、历史追踪和回退功能。
+3 
+4 该模块提供了以下功能:
+5 1. 提取历史轮次的日志信息
+6 2. 格式化历史执行记录用于AI参考
+7 3. 分析用户需求，决定是否需要版本回退
+8 4. 执行Git版本回退操作
+9 5. 为AI助手提供版本回退工具
+10 """
+11 
+12 import logging
+13 from dataclasses import dataclass
+14 from typing import List, Tuple, Optional
+15 
+16 from langchain_core.tools import Tool, StructuredTool
+17 from pydantic import BaseModel, Field
+18 
+19 from core.ai import AIConfig, AIAssistant
+20 from core.git_manager import GitManager
+21 from core.log_manager import LogManager
+22 from core.prompt_generator import PromptGenerator
+23 
+24 logger = logging.getLogger(__name__)
+25 
+26 
+27 @dataclass
+28 class VersionInfo:
+29     """存储特定版本的信息"""
+30     issue_id: int
+31     round_num: int
+32     requirement: str
+33     agent_response: str
+34     branch_name: str = ""
+35     
+36     def get_branch_name(self) -> str:
+37         """获取对应的Git分支名"""
+38         if not self.branch_name:
+39             self.branch_name = f"bella-bot-issues-{self.issue_id}-{self.round_num}"
+40         return self.branch_name
+41 
+42 
+43 class VersionManager:
+44     """管理代码生成的版本信息，支持版本回退和需求整合"""
+45 
+46     def __init__(self, issue_id : int, ai_config: AIConfig, log_manager: LogManager, git_manager: GitManager):
+47         """
+48         初始化版本管理器
+49         
+50         Args:
+51             log_manager: 日志管理器实例
+52             git_manager: Git管理器实例
+53         """
+54         self.ai_assistant = AIAssistant(config=ai_config, tools=[self._create_version_manager_tool()])
+55         self.log_manager = log_manager
+56         self.git_manager = git_manager
+57         self.current_issue_id = issue_id
+58         self.current_round_num = log_manager.get_current_round()
+59 
+60     def ensure_version_and_generate_context(self, original_requirement: str) -> tuple[str, str]:
+61         rollback = False,
+62         requirement = None
+63         reasoning = None
+64         if self.current_round_num > 2 :
+65             rollback, rollback_num, requirement, reasoning = self._analyze_rollback_need(requirement)
+66         requirement = original_requirement if requirement is None else requirement
+67         history = self.get_formatted_history(rollback, reasoning)
+68         return requirement, history
+69 
+70     def _extract_history(self) -> List[VersionInfo]:
+71         """
+72         提取当前issue的历史版本信息
+73             
+74         Returns:
+75             List[VersionInfo]: 历史版本信息列表
+76         """
+77         # 获取所有轮次的日志条目
+78         log_entries = self.log_manager.get_issue_log_entries()
+79         
+80         # 提取每轮的需求和响应
+81         version_info_list = []
+82         for entry in log_entries:
+83             try:
+84                 # 从用户提示中提取需求
+85                 extracted_info = PromptGenerator.extractInfo(entry.prompt)
+86                 requirement = extracted_info.requirement
+87                 
+88                 # 创建版本信息
+89                 version_info = VersionInfo(
+90                     issue_id=self.current_issue_id,
+91                     round_num=entry.round_num,
+92                     requirement=requirement,
+93                     agent_response=entry.response,
+94                 )
+95                 version_info_list.append(version_info)
+96                 
+97             except Exception as e:
+98                 logger.error(f"提取轮次 {entry.round_num} 的信息时出错: {str(e)}")
+99         
+100         return version_info_list
+101 
+102     def get_formatted_history(self,
+103                               rollback: bool = False,
+104                               reasoning: Optional[str] = None) -> str:
+105         """
+106         获取格式化的历史执行记录
+107         
+108         Args:
+109             
+110         Returns:
+111             str: 格式化的历史执行记录
+112         """
+113         history = self._extract_history()
+114         formatted_history = []
+115         
+116         for version in history:
+117             formatted_history.append(f"【round_{version.round_num}】")
+118             formatted_history.append(f"requirement: \n{version.requirement}")
+119             
+120             # 简化AI响应，避免历史记录过长
+121             formatted_history.append(f"agent_response: \n{version.agent_response}")
+122             formatted_history.append("")  # 添加空行分隔
+123             formatted_history.append("=========================以上内容为历史执行过程，所有代码改动均已经生效========================================")
+124         if rollback:
+125             formatted_history.append("=========================经过分析后续的历史执行过程不符合用户需求，已经回滚，不在此展示============================")
+126             if reasoning:
+127                 formatted_history.append(f"回滚原因:\n{reasoning}")
+128         return "\n".join(formatted_history)
+129 
+130     def _analyze_rollback_need(self,
+131                               current_requirement: str) -> Tuple[bool, Optional[int], Optional[str], Optional[str]]:
+132         """
+133         分析是否需要版本回退
+134         
+135         Args:
+136             current_requirement: 当前用户需求
+137             
+138         Returns:
+139             Tuple[bool, int, str, str]: (是否需要回退, 回退到的轮次, 整合后的需求，决策的原因)
+140         """
+141         # 获取历史记录
+142         history = self.get_formatted_history()
+143         
+144         # 构建提示词
+145         prompt = f"""
+146 # 角色
+147 你是一位资深程序员，现在在处理用户的issues，请分析本次用户提出的需求和历史执行记录，判断之前提交的代码是否需要版本回退。并调用工具完成版本的创建。
+148 
+149 # 历史执行记录
+150 {history}
+151 
+152 # 当前用户需求
+153 {current_requirement}
+154 
+155 
+156 #执行步骤
+157 ##工具参数分析
+158 你需要调用 version_manager 工具来处理问题，请请根据上述信息分析以下问题，
+159 1. 是否需要回退到某个特定版本? 如果需要，则调用工具时的参数 need_rollback 为 True
+160 2. 如果需要回退，应该回退到哪个round?  调用工具时的参数，至少为1，必须保留第一轮的结果
+161 3. 如果需要回退，当前需求的信息是否完整？需要把回退到的round之后的round需求与当前需求结合，作为补充信息吗? 如果需要结合，则将重写后的本轮需求，作为integrated_requirement参数；如果不需要则不需要此参数。
+162 4. 做出这个决策的原因是什么？调用工具时，作为reasoning参数
+163 
+164 ##工具执行
+165 根据得到的参数，调用version_manager。无论是否需要rollback必须调用工具执行任务，完成当前版本的创建。
+166 
+167 """
+168 
+169         # 发送给AI进行分析
+170         response = self.ai_assistant.generate_response(prompt, use_tools=True)
+171 
+172         return response if response else (False, 0, current_requirement)
+173 
+174     def _rollback_to_version(self, target_round: int) -> bool:
+175         """
+176         执行版本回退
+177         
+178         Args:
+179             target_round: 目标轮次
+180             
+181         Returns:
+182             bool: 回退是否成功
+183         """
+184         try:
+185             # 构建目标分支名
+186             target_branch = self.git_manager.get_issues_branch_name(self.current_issue_id, target_round)
+187             self.git_manager.reset_to(target_branch)
+188             return True
+189             
+190         except Exception as e:
+191             logger.error(f"版本回退失败: {str(e)}")
+192             return False
+193 
+194     class _VersionManagerToolSchema(BaseModel):
+195         need_rollback: bool = Field(
+196             ...,
+197             examples=[True, False],
+198             description="是否需要回退版本"
+199         )
+200         target_round: Optional[int] = Field(
+201             None,
+202             examples=[1,2,3,4],
+203             description="要回滚到的目标轮次，只有need_rollback为True时需要且必须"
+204         )
+205         integrated_requirement: Optional[str] = Field(
+206             None,
+207             description="整合后的需求，只有need_rollback为True且需要重写需求时需要"
+208         )
+209         reasoning: Optional[str] = Field(
+210             None,
+211             description="做这个出决策的原因"
+212         )
+213 
+214     def _create_version_manager_tool(self) -> StructuredTool:
+215         """
+216         版本管理工具，供AI助手使用
+217             
+218         Returns:
+219             Tool: 版本管理工具
+220         """
+221         def version_manager_tool(need_rollback: bool,
+222                                           target_round: Optional[int] = None,
+223                                           integrated_requirement: Optional[str] = None,
+224                                           reasoning: Optional[str] = None) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
+225             """
+226             决定是否回退版本并执行回退
+227             
+228             Args:
+229                 need_rollback:是否需要回退,
+230                 target_round：回退到的轮次,
+231                 integrated_requirement： 整合后的需求
+232                 reasoning: 做出决策的原因
+233                 
+234             Returns:
+235                 str: 执行结果
+236             """
+237             
+238             if need_rollback and target_round and target_round > 0:
+239                 success = self._rollback_to_version(target_round)
+240                 if(success) :
+241                     return (True, target_round, integrated_requirement, reasoning)
+242                 else:
+243                     logger.warning(f"版本回退失败:issues:{self.current_issue_id},target:{target_round},integrated_requirement:{integrated_requirement}")
+244             return (False, 0, None, reasoning)
+245         
+246         return StructuredTool.from_function(
+247             name="version_rollback_manager",
+248             description="用于决定当前项目版本的工具，如果 need_rollback 为True，则根据target_round和integrated_requirement进行版本回退；如果need_rollback为False则保持当前版本",
+249             func=version_manager_tool,
+250             return_direct=True,
+251             args_schema=self._VersionManagerToolSchema
+252         )
+253
+```
+
+
+
+
+```
+File: generate.py
+1 import os
+2 
+3 from dotenv import load_dotenv
+4 
+5 from core.ai import AIConfig
+6 from core.code_engineer import CodeEngineerConfig, CodeEngineer
+7 from core.diff import Diff
+8 from core.file_memory import FileMemory 
+9 from core.file_selector import FileSelector
+10 from core.log_manager import LogManager, LogConfig
+11 from core.prompt_generator import PromptData, PromptGenerator
+12 
+13 
+14 def main():
+15     load_dotenv()
+16     
+17     # 演示新的决策环境和工作流引擎
+18     demonstrate_workflow_with_decision()
+19     
+20     # 原有代码保持不变
+21     demonstrate_existing_workflow()
+22 
+23 
+24 def demonstrate_workflow_with_decision():
+25     """演示使用决策环境的工作流"""
+26     from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+27     
+28     print("=== 演示使用决策环境的工作流 ===")
+29     
+30     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "."))
+31     issue_id = 3  # 使用新的Issue ID
+32     
+33     # 创建工作流引擎配置
+34     config = WorkflowEngineConfig(
+35         project_dir=project_dir,
+36         issue_id=issue_id,
+37         core_model="gpt-4o",
+38         data_model="gpt-4o",
+39         core_template=0.7,
+40         data_template=0.7
+41     )
+42     
+43     # 初始化工作流引擎
+44     workflow_engine = WorkflowEngine(config)
+45     
+46     # 模拟用户需求
+47     user_requirement = """
+48     我想了解version_manager模块的主要功能是什么？能不能给我简单解释一下？
+49     """
+50     
+51     # 处理用户需求
+52     success, response, decision = workflow_engine.process_requirement(user_requirement)
+53     
+54     # 打印处理结果
+55     print(f"处理成功: {success}")
+56     print(f"需要修改代码: {decision.needs_code_modification}")
+57     print(f"决策理由: {decision.reasoning}")
+58     print(f"响应: {response}")
+59 
+60 
+61 def demonstrate_existing_workflow():
+62     """演示原有的工作流程"""
+63 
+64     requirement = f"""
+65     ##背景：
+66     此项目是一个根据用户issues生成代码并回复的Agent，一轮回复后，用户可能会可能会进行评论，每一轮交互的log都保存在格式为
+67     project_dir/.eng/memory/isseus/#1/round_1的目录下
+68     
+69     每一个文件都会严格按照该格式进行保存
+70     ##任务：
+71     实现一个版本信息管理，根据交互的过程，确定当前版本，并给出当前版本的历史执行过程作为本轮对话的memory。
+72     ###主流程
+73     0、先通过代码提取所有文件的有效信息
+74     1、AI来决策是否需要版本回退，意思是之前的操作如果被用户全盘否定，那么就需要回退操作状态。
+75     3、版本回退解释
+76         当前issues#1执行到round_6，但是AI判断用户不想要round4和round5改的代码，希望重新改，那么就应该
+77         1）把git状态回退到round3，拉取远端的bella-bot-issues-1-3，并hard reset
+78         2) 将提取出的round_4和round_5结合当前用户需求，整合为一个新的需求，作为用户本轮的需求
+79     4、将用户的本轮需求作为当前任务，提取出的信息作为执行过程
+80 
+81     
+82     ###通过代码提取
+83     0、通过log_manager.LogManager#get_issue_log_entries 获取所有轮次的日志信息，进行如下处理
+84     
+85     1、步骤0提取的prompt通过PromptGenerator.extractInfo提取requirement，着就是该轮的用户需求
+86     
+87     2、步骤1提取requirement和步骤0提取的response，分别用requirement 和 agent_response 来标识
+88     
+89     3、不同轮次之间要有标识，如：
+90     【round_1】
+91     
+92     ###AI决策
+93     使用ai.py
+94     根据用户本轮的需求，结合历史执行记录，判断是否需要回退版本。
+95     如果需要则将回退的版本信息和用户当前需求进行整合，作为本轮需求。
+96     并且执行版本回退工具。
+97     版本回退作为一个工具，参数为current_requirement和round_num。AI来决定是否调用。
+98     """
+99 
+100     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "."))
+101     selector = FileSelector(
+102         project_dir,
+103         2,
+104         ai_config=AIConfig(temperature=1, model_name="coder-model"),
+105     )
+106 
+107     files = selector.select_files_for_requirement(requirement)
+108 
+109     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+110 
+111     data = PromptData(project_dir = project_dir, files=files, file_desc=descriptions, requirement=requirement, steps=None)
+112 
+113     prompt = PromptGenerator.generatePrompt(data)
+114 
+115     config = CodeEngineerConfig(project_dir=project_dir, ai_config=AIConfig(
+116         temperature=1,
+117         model_name="coder-model"
+118     ))
+119 
+120     engineer = CodeEngineer(config, LogManager(LogConfig(project_dir=project_dir, issue_id=2)), Diff(AIConfig(temperature=0.1,
+121                                                                                   model_name="gpt-4o")))
+122     engineer.process_prompt(prompt, 2)
+123 
+124 
+125 if __name__ == "__main__":
+126     main()
+127
+```
+
+
+
+
+# 历史执行信息
+
+【round_1】
+requirement: 
+新增一个example文件，展示如果调用code_engineer写代码
+agent_response: 
+I'll create a new example file that demonstrates how to use the `CodeEngineer` class to write code. I'll implement this as a comprehensive example that shows the complete workflow of using the `CodeEngineer` class.
+
+Let's start by analyzing the existing code structure and then implement a new example file.
+
+```diff
+--- /dev/null
++++ examples/example_code_engineer.py
+@@ -0,0 +1,105 @@
++"""
++Example script demonstrating how to use the CodeEngineer class to generate and apply code changes.
++This example shows how to:
++1. Set up the CodeEngineer with proper configuration
++2. Prepare a user prompt for code generation
++3. Process the prompt and apply the changes
++4. Handle the response and check the results
++"""
++
++import os
++import sys
++from dotenv import load_dotenv
++
++# Add parent directory to path for imports
++sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from core.ai import AIConfig
++from core.code_engineer import CodeEngineer, CodeEngineerConfig
++from core.diff import Diff
++from core.log_manager import LogManager, LogConfig
++
++
++def main():
++    # Load environment variables
++    load_dotenv()
++    
++    # Define the project directory
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
++    
++    # Define an issue ID for tracking purposes
++    issue_id = 100  # Use a unique issue ID for this example
++    
++    print(f"Starting CodeEngineer example with project directory: {project_dir}")
++    print(f"Using issue ID: {issue_id}")
++    
++    # 1. Set up configurations
++    
++    # Configure AI settings
++    ai_config = AIConfig(
++        model_name="claude-3.7-sonnet",  # You can change this to any model you have access to
++        temperature=0.7,  # Adjust creativity vs. determinism (0.0-1.0)
++        max_tokens=4000,  # Maximum tokens for AI responses
++    )
++    
++    # Configure the CodeEngineer
++    code_engineer_config = CodeEngineerConfig(
++        project_dir=project_dir,
++        ai_config=ai_config,
++        max_retries=2  # Number of retries for failed operations
++    )
++    
++    # Configure logging
++    log_config = LogConfig(
++        project_dir=project_dir,
++        issue_id=issue_id
++    )
++    log_manager = LogManager(config=log_config)
++    
++    # Create a Diff processor with a more deterministic temperature setting
++    # Using a lower temperature for the diff processing helps ensure more reliable code changes
++    diff_processor = Diff(AIConfig(temperature=0.1, model_name="claude-3.7-sonnet"))
++    
++    # 2. Initialize the CodeEngineer
++    engineer = CodeEngineer(
++        config=code_engineer_config,
++        log_manager=log_manager,
++        diff=diff_processor
++    )
++    
++    # 3. Define a user prompt for code generation
++    user_prompt = """
++    Create a simple Python utility function that:
++    
++    1. Takes a list of numbers as input
++    2. Filters out all negative numbers
++    3. Calculates the average of the remaining positive numbers
++    4. Returns the average, or 0 if there are no positive numbers
++    
++    Please implement this in a new file called 'utils/math_helpers.py'.
++    Make sure to include proper documentation and unit tests in 'tests/test_math_helpers.py'.
++    """
++    
++    print("\nProcessing prompt with CodeEngineer...")
++    print("-" * 50)
++    print(f"User prompt:\n{user_prompt}")
++    print("-" * 50)
++    
++    # 4. Process the prompt with the CodeEngineer
++    success = engineer.process_prompt(prompt=user_prompt, issue_id=issue_id)
++    
++    # 5. Check the results
++    if success:
++        print("\nSuccessfully processed the prompt!")
++        print("The requested changes have been applied to the codebase.")
++        print(f"You can find the logs in: {os.path.join(project_dir, '.eng', 'memory', f'issues#{issue_id}')}")
++    else:
++        print("\nFailed to process the prompt.")
++        print(f"Failed files: {engineer.failed_files}")
++        print("Check the logs for more details.")
++    
++    print("\nExample completed!")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+```diff
+--- /dev/null
++++ examples/README.md
+@@ -0,0 +1,30 @@
++# Code Engineer Examples
++
++This directory contains examples demonstrating how to use the Code Engineer framework for various use cases.
++
++## Available Examples
++
++### `example_generate.py`
++
++Demonstrates a complete workflow of generating code based on requirements, including:
++- File selection
++- Version management
++- Git integration
++- Code generation and application
++
++### `example_code_engineer.py`
++
++A focused example on how to use the `CodeEngineer` class directly to:
++- Generate code based on a user prompt
++- Apply changes to the codebase
++- Handle errors and logging
++
++## Running Examples
++
++To run an example, execute the following command from the project root:
++
++```
++python -m examples.example_code_engineer
++```
++
++Make sure all required environment variables are properly set in your `.env` file.
+```
+
+Now let's create a more comprehensive example that demonstrates using CodeEngineer with the file selector, prompt generator, and other components:
+
+```diff
+--- /dev/null
++++ examples/example_complete_workflow.py
+@@ -0,0 +1,130 @@
++"""
++A comprehensive example demonstrating the complete workflow of the code engineering process,
++including file selection, prompt generation, code engineering, and version management.
++
++This example shows:
++1. How to select relevant files for a given requirement
++2. How to generate a structured prompt using file information
++3. How to use CodeEngineer to generate and apply code changes
++4. How to manage versions and track changes
++"""
++
++import os
++import sys
++from dotenv import load_dotenv
++
++# Add parent directory to path for imports
++sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from core.ai import AIConfig
++from core.code_engineer import CodeEngineer, CodeEngineerConfig
++from core.diff import Diff
++from core.file_memory import FileMemory
++from core.file_selector import FileSelector
++from core.git_manager import GitManager, GitConfig
++from core.log_manager import LogManager, LogConfig
++from core.prompt_generator import PromptGenerator, PromptData
++from core.version_manager import VersionManager
++
++
++def main():
++    # Load environment variables
++    load_dotenv()
++    
++    # Define project directory and issue ID
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
++    issue_id = 101
++    
++    print(f"Starting complete workflow example with project directory: {project_dir}")
++    print(f"Using issue ID: {issue_id}")
++    
++    # Step 1: Set up initial configurations
++    
++    # Configure AI
++    ai_config = AIConfig(
++        model_name="claude-3.7-sonnet",
++        temperature=0.7,
++        max_tokens=4000
++    )
++    
++    # Configure logging
++    log_config = LogConfig(
++        project_dir=project_dir,
++        issue_id=issue_id
++    )
++    log_manager = LogManager(config=log_config)
++    current_round = log_manager.get_current_round()
++    
++    print(f"Current log round: {current_round}")
++    
++    # Configure Git manager
++    git_config = GitConfig(
++        repo_path=project_dir
++    )
++    git_manager = GitManager(config=git_config)
++    
++    # Step 2: Initialize version manager
++    version_manager = VersionManager(
++        issue_id=issue_id,
++        log_manager=log_manager,
++        git_manager=git_manager,
++        ai_config=ai_config
++    )
++    
++    # Step 3: Define the current requirement
++    current_requirement = """
++    Add a new utility function in the utils directory that processes text files:
++    - Create a function that reads a text file and returns a frequency count of words
++    - Implement filtering options to exclude common words (stopwords)
++    - Add an option to return the results sorted by frequency or alphabetically
++    - Create appropriate unit tests for the functionality
++    """
++    
++    # Step 4: Get version-aware context
++    requirement, history = version_manager.ensure_version_and_generate_context(current_requirement)
++    
++    print("\nProcessed requirement with version context:")
++    print(f"Requirement: {requirement[:100]}...")
++    print(f"History steps: {len(history) if history else 0}")
++    
++    # Step 5: Create and switch to the appropriate branch
++    branch_name = git_manager.get_issues_branch_name(issue_id, current_round)
++    git_manager.switch_branch(branch_name, create=True)
++    
++    print(f"\nSwitched to branch: {branch_name}")
++    
++    # Step 6: Select relevant files
++    file_selector = FileSelector(
++        project_dir=project_dir,
++        issue_id=issue_id,
++        ai_config=ai_config
++    )
++    
++    selected_files = file_selector.select_files_for_requirement_with_log(requirement)
++    print(f"\nSelected {len(selected_files)} relevant files for the requirement")
++    
++    # Step 7: Get file descriptions
++    file_descriptions = FileMemory.get_selected_file_descriptions(project_dir, selected_files)
++    
++    # Step 8: Generate a structured prompt
++    prompt_data = PromptData(
++        requirement=requirement,
++        project_dir=project_dir,
++        steps=history,
++        files=selected_files,
++        file_desc=file_descriptions
++    )
++    
++    user_prompt = PromptGenerator.generatePrompt(prompt_data)
++    
++    # Step 9: Initialize and use CodeEngineer
++    engineer_config = CodeEngineerConfig(project_dir=project_dir, ai_config=ai_config)
++    engineer = CodeEngineer(engineer_config, log_manager, Diff(AIConfig(temperature=0.1, model_name="claude-3.7-sonnet")))
++    
++    print("\nGenerating and applying code changes...")
++    success = engineer.process_prompt(prompt=user_prompt, issue_id=issue_id)
++    
++    # Step 10: Commit changes if successful
++    if success:
++        print("\nCode changes applied successfully, committing changes...")
++        git_manager.commit(f"issues#{issue_id}-Add text file processing utilities")
++        git_manager.push(branch=branch_name, force=True)
++        print(f"\nChanges pushed to branch: {branch_name}")
++    else:
++        print("\nFailed to apply code changes. Check logs for details.")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+Finally, let's create a requirements.txt file to ensure all necessary dependencies are included:
+
+```diff
+--- /dev/null
++++ requirements.txt
+@@ -0,0 +1,8 @@
++python-dotenv>=1.0.0
++openai>=1.0.0
++typing_extensions>=4.5.0
++gitpython>=3.1.30
++pytest>=7.0.0
++dataclasses>=0.6
++anthropic>=0.5.0
++pydantic>=2.0.0
+```
+
+This implementation provides:
+
+1. A focused example (`example_code_engineer.py`) that demonstrates the basic usage of the `CodeEngineer` class
+2. A comprehensive example (`example_complete_workflow.py`) that shows the full workflow including file selection, version management, and Git integration
+3. A README.md file for the examples directory explaining the purpose of each example
+4. A requirements.txt file ensuring all dependencies are specified
+
+The examples are designed to be educational and show how different components of the system work together. They demonstrate typical usage patterns and provide a reference for users who want to understand how to leverage the `CodeEngineer` class for their own code generation needs.
+
+This concludes a fully working implementation.
+
+=========================以上内容为历史执行过程，所有代码改动均已经生效========================================
+【round_2】
+requirement: 
+在这个流程上，加入一个初始判断，如果轮次大于1，判断用户此次的问题是否是需要继续修改代码，
+    判断要依赖当前上下文。你应该先通过version_manager获取当前上下文，然后询问AI。如果要写代码，应该执行目前的写代码流程，如果不需要写代码，
+    进入chat流程，流程的具体方法，暂时先不需要实现，先把结构实现好。通过大模型的工具调用来分析用户是否需要修改代码。
+    这个决策环境，作为一个单独的类来实现，放在core目录下。
+agent_response: 
+I'll implement a decision environment class that determines whether the user's query requires code modification or just a chat response. Let's create this flow:
+
+1. First, I'll create a new class in the core directory called `decision_environment.py`
+2. Modify the workflow_engine.py to include this decision-making process
+3. Update the generate.py to use this new flow
+
+Let's start by implementing the decision environment class:
+
+```diff
+--- /dev/null
++++ core/decision_environment.py
+@@ -0,0 +1,129 @@
++"""
++决策环境模块，用于分析用户需求类型并确定处理流程。
++
++该模块主要功能：
++1. 分析用户输入的需求是否需要修改代码
++2. 根据分析结果决定使用代码修改流程还是对话流程
++3. 为AI助手提供决策工具
++"""
++
++import logging
++from dataclasses import dataclass
++from typing import Optional, List, Dict, Any
++
++from langchain_core.tools import StructuredTool
++from pydantic import BaseModel, Field
++
++from core.ai import AIAssistant, AIConfig
++from core.version_manager import VersionManager
++
++logger = logging.getLogger(__name__)
++
++
++@dataclass
++class DecisionResult:
++    """存储决策结果信息"""
++    needs_code_modification: bool
++    reasoning: str
++    modified_requirement: Optional[str] = None
++
++
++class DecisionEnvironment:
++    """
++    决策环境类，用于确定用户需求是代码修改还是对话
++    """
++    
++    def __init__(self, ai_config: AIConfig, version_manager: VersionManager):
++        """
++        初始化决策环境
++        
++        Args:
++            ai_config: AI配置信息
++            version_manager: 版本管理器实例
++        """
++        self.version_manager = version_manager
++        self.ai_assistant = AIAssistant(
++            config=ai_config, 
++            tools=[self._create_requirement_analyzer_tool()]
++        )
++
++    def analyze_requirement(self, user_requirement: str) -> DecisionResult:
++        """
++        分析用户需求类型
++        
++        Args:
++            user_requirement: 用户输入的需求
++            
++        Returns:
++            DecisionResult: 决策结果
++        """
++        # 只有当轮次大于1时，才需要进行决策分析
++        if self.version_manager.current_round_num <= 1:
++            # 首轮默认是代码修改需求
++            return DecisionResult(
++                needs_code_modification=True,
++                reasoning="首轮交互默认为代码修改需求",
++                modified_requirement=user_requirement
++            )
++
++        # 获取历史上下文
++        history_context = self.version_manager.get_formatted_history()
++        
++        # 构建提示词
++        prompt = f"""
++# 任务
++你需要分析用户的需求是否需要修改代码，还是只需要回答问题。
++
++# 历史上下文
++{history_context}
++
++# 当前用户需求
++{user_requirement}
++
++# 决策步骤
++1. 仔细阅读用户当前的需求
++2. 分析需求是否包含代码修改、新增功能、修复bug等要求
++3. 如果用户只是提问、咨询、请求解释或澄清，则判断为不需要修改代码
++4. 如果需要修改代码，请考虑是否需要对原需求进行明确化或补充
++
++请使用requirement_analyzer工具返回决策结果。
++"""
++
++        # 发送给AI进行分析
++        response = self.ai_assistant.generate_response(prompt, use_tools=True)
++        
++        # 如果没有得到有效决策，默认为需要修改代码
++        if not isinstance(response, dict) or 'needs_code_modification' not in response:
++            logger.warning("未获取到有效决策结果，默认为需要修改代码")
++            return DecisionResult(
++                needs_code_modification=True,
++                reasoning="无法确定需求类型，默认为代码修改",
++                modified_requirement=user_requirement
++            )
++            
++        return DecisionResult(
++            needs_code_modification=response['needs_code_modification'],
++            reasoning=response['reasoning'],
++            modified_requirement=response.get('modified_requirement', user_requirement)
++        )
++
++    class _RequirementAnalyzerSchema(BaseModel):
++        needs_code_modification: bool = Field(
++            ..., 
++            description="是否需要修改代码"
++        )
++        reasoning: str = Field(
++            ..., 
++            description="决策理由"
++        )
++        modified_requirement: Optional[str] = Field(
++            None, 
++            description="如果需要修改，可能会对需求进行明确化或补充"
++        )
++
++    def _create_requirement_analyzer_tool(self) -> StructuredTool:
++        """创建需求分析工具"""
++        return StructuredTool.from_function(
++            name="requirement_analyzer",
++            description="分析用户需求是否需要修改代码的工具",
++            func=lambda **kwargs: kwargs,
++            args_schema=self._RequirementAnalyzerSchema
++        )
+```
+
+Now let's update the workflow_engine.py to include the decision-making process:
+
+```diff
+--- core/workflow_engine.py
++++ core/workflow_engine.py
+@@ -1,6 +1,6 @@
+ import logging
+ from dataclasses import dataclass
+-from typing import Optional
++from typing import Optional, Tuple, Union
+ 
+ from core.ai import AIAssistant, AIConfig
+ from core.git_manager import GitManager, GitConfig
+@@ -8,6 +8,7 @@ from core.log_manager import LogManager, LogConfig
+ from core.prompt_generator import PromptGenerator, PromptData
+ from core.version_manager import VersionManager
+ 
++from core.decision_environment import DecisionEnvironment, DecisionResult
+ logger = logging.getLogger(__name__)
+ 
+ @dataclass
+@@ -22,10 +23,78 @@ class WorkflowEngineConfig:
+     api_key: Optional[str] = None
+     github_remote_url: Optional[str] =None
+     github_token: Optional[str] = None
+-
+ 
+ class WorkflowEngine:
+     """
+     工作流引擎，协调版本管理、日志管理和AI交互
+     """
+-
++    def __init__(self, config: WorkflowEngineConfig):
++        """
++        初始化工作流引擎
++        
++        Args:
++            config: 工作流配置
++        """
++        self.config = config
++        
++        # 创建AI配置
++        self.core_ai_config = AIConfig(
++            model_name=config.core_model,
++            temperature=config.core_template,
++            base_url=config.base_url,
++            api_key=config.api_key
++        )
++        
++        self.data_ai_config = AIConfig(
++            model_name=config.data_model,
++            temperature=config.data_template,
++            base_url=config.base_url,
++            api_key=config.api_key
++        )
++        
++        # 创建Git配置
++        self.git_config = GitConfig(
++            repo_path=config.project_dir,
++            remote_url=config.github_remote_url,
++            github_token=config.github_token
++        )
++        
++        # 创建日志配置
++        self.log_config = LogConfig(
++            project_dir=config.project_dir,
++            issue_id=config.issue_id
++        )
++        
++        # 初始化管理器
++        self.log_manager = LogManager(config=self.log_config)
++        self.git_manager = GitManager(config=self.git_config)
++        self.version_manager = VersionManager(
++            issue_id=config.issue_id,
++            ai_config=self.core_ai_config,
++            log_manager=self.log_manager,
++            git_manager=self.git_manager
++        )
++        
++        # 初始化决策环境
++        self.decision_env = DecisionEnvironment(
++            ai_config=self.core_ai_config,
++            version_manager=self.version_manager
++        )
++    
++    def process_requirement(self, user_requirement: str) -> Tuple[bool, str, DecisionResult]:
++        """
++        处理用户需求
++        
++        Args:
++            user_requirement: 用户需求
++            
++        Returns:
++            Tuple[bool, str, DecisionResult]: 处理成功标志、回复内容和决策结果
++        """
++        # 先通过决策环境分析需求类型
++        decision_result = self.decision_env.analyze_requirement(user_requirement)
++        
++        if decision_result.needs_code_modification:
++            # TODO: 代码修改流程
++            return True, "执行了代码修改流程", decision_result
++        else:
++            # TODO: 对话流程
++            return True, "执行了对话流程", decision_result
+```
+
+Now let's update the generate.py to use the new workflow engine and decision environment:
+
+```diff
+--- generate.py
++++ generate.py
+@@ -5,7 +5,7 @@ from dotenv import load_dotenv
+ from core.ai import AIConfig
+ from core.code_engineer import CodeEngineerConfig, CodeEngineer
+ from core.diff import Diff
+-from core.file_memory import FileMemory
++from core.file_memory import FileMemory 
+ from core.file_selector import FileSelector
+ from core.log_manager import LogManager, LogConfig
+ from core.prompt_generator import PromptData, PromptGenerator
+@@ -13,6 +13,49 @@ from core.prompt_generator import PromptData, PromptGenerator
+ 
+ def main():
+     load_dotenv()
++    
++    # 演示新的决策环境和工作流引擎
++    demonstrate_workflow_with_decision()
++    
++    # 原有代码保持不变
++    demonstrate_existing_workflow()
++
++def demonstrate_workflow_with_decision():
++    """演示使用决策环境的工作流"""
++    from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
++    
++    print("=== 演示使用决策环境的工作流 ===")
++    
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "."))
++    issue_id = 3  # 使用新的Issue ID
++    
++    # 创建工作流引擎配置
++    config = WorkflowEngineConfig(
++        project_dir=project_dir,
++        issue_id=issue_id,
++        core_model="gpt-4o",
++        data_model="gpt-4o",
++        core_template=0.7,
++        data_template=0.7
++    )
++    
++    # 初始化工作流引擎
++    workflow_engine = WorkflowEngine(config)
++    
++    # 模拟用户需求
++    user_requirement = """
++    我想了解version_manager模块的主要功能是什么？能不能给我简单解释一下？
++    """
++    
++    # 处理用户需求
++    success, response, decision = workflow_engine.process_requirement(user_requirement)
++    
++    # 打印处理结果
++    print(f"处理成功: {success}")
++    print(f"需要修改代码: {decision.needs_code_modification}")
++    print(f"决策理由: {decision.reasoning}")
++    print(f"响应: {response}")
++
++def demonstrate_existing_workflow():
++    """演示原有的工作流程"""
+ 
+     requirement = f"""
+     ##背景：
+@@ -74,6 +117,7 @@ def main():
+                                                                                  model_name="gpt-4o")))
+     engineer.process_prompt(prompt, 2)
+ 
++
+ if __name__ == "__main__":
+     main()
+```
+
+Let's also create a simple chat module structure (without full implementation) to handle the chat flow:
+
+```diff
+--- /dev/null
++++ core/chat_processor.py
+@@ -0,0 +1,60 @@
++"""
++聊天处理模块，负责非代码修改类的用户交互。
++
++该模块提供以下功能:
++1. 处理用户的问题、咨询和澄清请求
++2. 使用上下文信息提供有针对性的回答
++3. 记录聊天互动日志
++"""
++
++import logging
++from dataclasses import dataclass
++from typing import Optional, List
++
++from core.ai import AIAssistant, AIConfig
++from core.log_manager import LogManager
++from core.version_manager import VersionManager
++
++logger = logging.getLogger(__name__)
++
++
++@dataclass
++class ChatProcessorConfig:
++    """聊天处理器配置"""
++    system_prompt: str = "你是一个专业的开发助手，负责回答用户关于项目的问题和提供技术支持。"
++    max_history_rounds: int = 5
++
++
++class ChatProcessor:
++    """
++    聊天处理器，处理非代码修改类需求
++    """
++
++    def __init__(self, 
++                 ai_config: AIConfig, 
++                 log_manager: LogManager,
++                 version_manager: VersionManager,
++                 config: Optional[ChatProcessorConfig] = None):
++        """
++        初始化聊天处理器
++        
++        Args:
++            ai_config: AI配置信息
++            log_manager: 日志管理器
++            version_manager: 版本管理器
++            config: 聊天处理器配置
++        """
++        self.config = config or ChatProcessorConfig()
++        self.ai_config = ai_config
++        self.log_manager = log_manager
++        self.version_manager = version_manager
++        
++        # 设置系统提示词
++        ai_config.sys_prompt = self.config.system_prompt
++        self.ai_assistant = AIAssistant(config=ai_config)
++
++    def process_chat(self, user_query: str) -> str:
++        """
++        处理用户的聊天请求
++        
++        Args:
++            user_query: 用户的问题或请求
++            
++        Returns:
++            str: AI助手的回答
++        """
++        # 获取历史上下文
++        history_context = self.version_manager.get_formatted_history()
++        
++        # 构建提示词
++        prompt = f"""
++# 历史上下文
++{history_context}
++
++# 用户问题
++{user_query}
++
++请根据历史上下文和你的知识，回答用户的问题。
++"""
++        
++        # 生成回答
++        response = self.ai_assistant.generate_response(prompt)
++        
++        # 记录日志
++        self.log_manager.archive_logs(
++            sys_prompt=self.config.system_prompt,
++            prompt=user_query,
++            response=response
++        )
++        
++        return response
+```
+
+Finally, let's update the workflow_engine.py to include the chat processor:
+
+```diff
+--- core/workflow_engine.py
++++ core/workflow_engine.py
+@@ -7,6 +7,8 @@ from core.git_manager import GitManager, GitConfig
+ from core.log_manager import LogManager, LogConfig
+ from core.prompt_generator import PromptGenerator, PromptData
+ from core.version_manager import VersionManager
++from core.code_engineer import CodeEngineer, CodeEngineerConfig
++from core.chat_processor import ChatProcessor, ChatProcessorConfig
+ 
+ from core.decision_environment import DecisionEnvironment, DecisionResult
+ logger = logging.getLogger(__name__)
+@@ -73,6 +75,23 @@ class WorkflowEngine:
+             log_manager=self.log_manager,
+             git_manager=self.git_manager
+         )
++
++        # 初始化代码工程师
++        self.code_engineer_config = CodeEngineerConfig(
++            project_dir=config.project_dir,
++            ai_config=self.core_ai_config
++        )
++        
++        # 初始化聊天处理器
++        self.chat_processor = ChatProcessor(
++            ai_config=self.core_ai_config,
++            log_manager=self.log_manager,
++            version_manager=self.version_manager,
++            config=ChatProcessorConfig(
++                system_prompt="你是一个专业的开发助手，负责回答用户关于代码和项目的问题。"
++            )
++        )
++
++        # 初始化代码工程师 - 在实际使用时才创建，避免不必要的对象创建
+         
+         # 初始化决策环境
+         self.decision_env = DecisionEnvironment(
+@@ -93,8 +112,22 @@ class WorkflowEngine:
+         # 先通过决策环境分析需求类型
+         decision_result = self.decision_env.analyze_requirement(user_requirement)
+         
++        logger.info(f"决策结果: 需要修改代码={decision_result.needs_code_modification}, "
++                    f"理由={decision_result.reasoning}")
++        
+         if decision_result.needs_code_modification:
+-            # TODO: 代码修改流程
+-            return True, "执行了代码修改流程", decision_result
++            # 代码修改流程
++            from core.diff import Diff
++            
++            # 延迟创建代码工程师对象
++            code_engineer = CodeEngineer(
++                config=self.code_engineer_config,
++                log_manager=self.log_manager,
++                diff=Diff(self.data_ai_config)
++            )
++            
++            # 在实际实现中，这里应该有更多的逻辑来处理代码修改流程
++            return True, "执行了代码修改流程 (这是示例响应，实际需实现完整流程)", decision_result
+         else:
+-            # TODO: 对话流程
+-            return True, "执行了对话流程", decision_result
++            # 对话流程
++            response = self.chat_processor.process_chat(user_requirement)
++            return True, response, decision_result
+```
+
+This implementation adds several components:
+
+1. A `DecisionEnvironment` class that analyzes user requirements to determine whether code modification is needed or just a chat response
+2. A `ChatProcessor` class that handles non-code modification interactions
+3. Updated the `WorkflowEngine` class to coordinate the decision-making process and route to either the code modification or chat flow
+4. Updated the `generate.py` file to demonstrate both workflows
+
+The decision-making process:
+
+1. Before processing a requirement, the system checks if this is beyond the first round
+2. If it's beyond round 1, it uses the decision environment to analyze whether the requirement needs code modification
+3. Based on the decision, it routes to either the code modification flow (using CodeEngineer) or the chat flow (using ChatProcessor)
+
+This structure allows for a more contextual handling of user inputs, supporting both code modification requests and general inquiries within the same framework.
+
+this concludes a fully working implementation.
+
+=========================以上内容为历史执行过程，所有代码改动均已经生效========================================
+【round_3】
+requirement: 
+I'll analyze the previous code implementation and the current user requirement to determine if a version rollback is needed.
+
+Looking at the implementation history, I see that:
+
+1. In round_1, a complete implementation was added for the example files to showcase how to call code_engineer to write code.
+2. In round_2, new code was added to implement a decision environment that determines whether a user's query requires code modification or just a chat response.
+
+The current user requirement is asking about understanding how example_generate.py works, and clarifying that the chat_process implementation should function similarly, but without version management and with chat_processor replacing the code engineer's processing.
+
+This is a clarification request about the existing implementation rather than a request to modify or roll back code. The user is trying to understand the implementation pattern to possibly apply it elsewhere.
+
+Therefore:
+
+1. There is no need to roll back to a specific version since the user is asking for clarification about the implementation, not expressing that there's an issue with the current code.
+2. The user's requirement is a query for understanding, not a request to modify code.
+
+I'll call the version_rollback_manager tool with the appropriate parameters:
+
+```json
+{
+  "need_rollback": false,
+  "reason": "The user is requesting clarification about how example_generate.py works and how chat_process should be implemented differently. This is a question for understanding the code structure, not a request to modify or roll back code."
+}
+```
+agent_response: 
+I'll implement the chat_processor functionality based on the existing example_generate.py pattern. Let's analyze the requirements and create the necessary code changes.
+
+First, I'll need to understand how example_generate.py works, then implement the chat_processor functionality that follows the same pattern but:
+1. Doesn't use version management
+2. Replaces CodeEngineer with ChatProcessor
+
+Let's start by implementing the example_chat.py file:
+
+```diff
+--- /dev/null
++++ examples/example_chat.py
+@@ -0,0 +1,74 @@
++import os
++
++from dotenv import load_dotenv
++
++from core.ai import AIConfig
++from core.chat_processor import ChatProcessor, ChatProcessorConfig
++from core.file_memory import FileMemory, FileMemoryConfig
++from core.file_selector import FileSelector
++from core.git_manager import GitManager, GitConfig
++from core.log_manager import LogManager, LogConfig
++from core.prompt_generator import PromptGenerator, PromptData
++
++
++def main():
++    # 加载环境变量
++    load_dotenv()
++    
++    # 创建工作目录
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
++
++    issue_id = 4  # 使用一个新的issue_id
++    
++    # 初始化日志管理器
++    log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
++    log_manager = LogManager(config=log_config)
++    current_round = log_manager.get_current_round()
++    
++    # 初始化Git管理器
++    git_config = GitConfig(
++        repo_path=project_dir
++    )
++    git_manager = GitManager(config=git_config)
++    branch_name = git_manager.get_issues_branch_name(issue_id, current_round)
++    
++    # 初始化AI助手
++    ai_config = AIConfig(
++        model_name="coder-model",
++        temperature=1
++    )
++    
++    # 注意：chat流程不需要使用版本管理
++    # version_manager = VersionManager(issue_id=issue_id, log_manager=log_manager, git_manager=git_manager, ai_config=ai_config)
++
++    current_requirement = '''
++    请解释一下项目中core目录下各个文件的主要功能和它们之间的关系
++    '''
++    
++    # 不需要version_manager的版本处理功能
++    # requirement, history = version_manager.ensure_version_and_generate_context(current_requirement)
++    
++    # 直接使用当前需求
++    requirement = current_requirement
++
++    git_manager.switch_branch(branch_name, True)
++
++    # 可选：选择相关文件来提供上下文
++    selector = FileSelector(
++        project_dir,
++        issue_id,
++        ai_config=ai_config,
++    )
++
++    files = selector.select_files_for_requirement(requirement)
++    descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
++
++    # 使用ChatProcessor替代CodeEngineer
++    chat_config = ChatProcessorConfig(system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。")
++    chat_processor = ChatProcessor(ai_config=ai_config, log_manager=log_manager, config=chat_config)
++    
++    response = chat_processor.process_chat(requirement)
++    print(response)
++
++
++if __name__ == "__main__":
++    main()
+```
+
+Now, let's update the chat_processor.py file to make sure it works with this example and doesn't require version_manager:
+
+```diff
+--- core/chat_processor.py
++++ core/chat_processor.py
+@@ -9,7 +9,8 @@
+ """
+ 
+ import logging
+-from dataclasses import dataclass
++from copy import copy
++from dataclasses import dataclass
+ from typing import Optional
+ 
+ from core.ai import AIAssistant, AIConfig
+@@ -22,18 +23,18 @@ logger = logging.getLogger(__name__)
+ @dataclass
+ class ChatProcessorConfig:
+     """聊天处理器配置"""
+-    system_prompt: str = "你是一个专业的开发助手，负责回答用户关于项目的问题和提供技术支持。"
+-    max_history_rounds: int = 5
++    system_prompt: str = "你是一个专业的开发助手，负责回答用户关于项目的问题和提供技术支持。下面会给出用户需求相关的代码和文档，以及历史迭代信息。"
+ 
+ 
+ class ChatProcessor:
+     """
+     聊天处理器，处理非代码修改类需求
+     """
+ 
+     def __init__(self, 
+                  ai_config: AIConfig, 
+-                 log_manager: LogManager,
+-                 version_manager: VersionManager,
++                 log_manager: LogManager,
++                 version_manager: Optional[VersionManager] = None,
+                  config: Optional[ChatProcessorConfig] = None):
+         """
+         初始化聊天处理器
+@@ -41,19 +42,21 @@ class ChatProcessor:
+         Args:
+             ai_config: AI配置信息
+             log_manager: 日志管理器
+-            version_manager: 版本管理器
++            version_manager: 版本管理器（可选）
+             config: 聊天处理器配置
+         """
+         self.config = config or ChatProcessorConfig()
+         self.log_manager = log_manager
+         self.version_manager = version_manager
+         
+         # 设置系统提示词
+-        ai_config.sys_prompt = self.config.system_prompt
+-        self.ai_assistant = AIAssistant(config=ai_config)
++        self.ai_config = copy(ai_config)
++        self.ai_config.sys_prompt = self.config.system_prompt
++        self.ai_assistant = AIAssistant(config=self.ai_config)
+ 
+     def process_chat(self, user_query: str) -> str:
+         """
+-        处理用户的聊天请求
++        处理用户的聊天请求
+         
+         Args:
+             user_query: 用户的问题或请求
+@@ -61,16 +64,7 @@ class ChatProcessor:
+         Returns:
+             str: AI助手的回答
+         """
+-        # 获取历史上下文
+-        history_context = self.version_manager.get_formatted_history()
+         
+-        # 构建提示词
+-        prompt = f"""
+-# 历史上下文
+-{history_context}
+-
+-# 用户问题
+-{user_query}
+-
+-请根据历史上下文和你的知识，回答用户的问题。
+-"""
++        # 生成回答
++        response = self.ai_assistant.generate_response(user_query)
+         
+-        # 生成回答
+-        response = self.ai_assistant.generate_response(prompt)
+         
+         # 记录日志
+         self.log_manager.archive_logs(
+@@ -80,3 +74,3 @@ class ChatProcessor:
+         )
+         
+         return response
+```
+
+Let's update the workflow_engine.py to ensure it properly integrates with our updated ChatProcessor:
+
+```diff
+--- core/workflow_engine.py
++++ core/workflow_engine.py
+@@ -86,9 +86,8 @@ class WorkflowEngine:
+         self.chat_processor = ChatProcessor(
+             ai_config=self.core_ai_config,
+             log_manager=self.log_manager,
+-            version_manager=self.version_manager,
+-            config=ChatProcessorConfig(
+-                system_prompt="你是一个专业的开发助手，负责回答用户关于代码和项目的问题。"
++            version_manager=self.version_manager,
++            config=ChatProcessorConfig()
+             )
+         )
+```
+
+Now, to provide a more complete example following the example_generate.py pattern but for chat processing, let's create example_chat_process.py:
+
+```diff
+--- /dev/null
++++ examples/example_chat_process.py
+@@ -0,0 +1,77 @@
++"""
++这个示例展示如何使用ChatProcessor处理用户对话需求
++与example_generate.py不同之处在于：
++1. 不需要使用版本管理
++2. 使用ChatProcessor替代CodeEngineer
++"""
++
++import os
++
++from dotenv import load_dotenv
++
++from core.ai import AIConfig
++from core.chat_processor import ChatProcessor, ChatProcessorConfig
++from core.file_memory import FileMemory, FileMemoryConfig
++from core.file_selector import FileSelector
++from core.git_manager import GitManager, GitConfig
++from core.log_manager import LogManager, LogConfig
++
++
++def main():
++    # 加载环境变量
++    load_dotenv()
++    
++    # 创建工作目录
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
++
++    issue_id = 5  # 使用一个新的issue_id
++    
++    # 初始化日志管理器
++    log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
++    log_manager = LogManager(config=log_config)
++    current_round = log_manager.get_current_round()
++
++    
++    # 初始化Git管理器
++    git_config = GitConfig(
++        repo_path=project_dir
++    )
++    git_manager = GitManager(config=git_config)
++    branch_name = git_manager.get_issues_branch_name(issue_id, current_round)
++    
++    # 初始化AI助手
++    ai_config = AIConfig(
++        model_name="coder-model",
++        temperature=1
++    )
++    
++    current_requirement = '''
++    请详细解释下工作流引擎(workflow_engine)在本项目中的作用，以及它是如何协调各个组件工作的
++    '''
++
++    if current_round > 1:
++        file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
++        file_memory.update_file_details()
++
++    git_manager.switch_branch(branch_name, True)
++
++    selector = FileSelector(
++        project_dir,
++        issue_id,
++        ai_config=ai_config,
++    )
++
++    # 选择相关文件来提供上下文
++    files = selector.select_files_for_requirement(current_requirement)
++    descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
++
++    # 使用ChatProcessor处理用户请求
++    chat_config = ChatProcessorConfig(
++        system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。"
++    )
++    chat_processor = ChatProcessor(ai_config=ai_config, log_manager=log_manager, config=chat_config)
++    
++    print(chat_processor.process_chat(current_requirement))
++
++
++if __name__ == "__main__":
++    main()
+```
+
+This implementation follows the pattern from example_generate.py but adapts it to use the chat processor instead of code engineering. Let me explain the key differences:
+
+1. **No Version Management**: Unlike the code generation workflow that might need to track code changes across versions, the chat processor doesn't need version management.
+
+2. **ChatProcessor instead of CodeEngineer**: The main processing is done by ChatProcessor instead of CodeEngineer, focusing on generating conversational responses rather than code modifications.
+
+3. **Simplified Flow**: The chat processing flow is simpler, as it doesn't need to parse and apply diffs to the codebase.
+
+The implementation provides two example files:
+- example_chat.py: A basic example showing how to use ChatProcessor
+- example_chat_process.py: A more complete example following the same pattern as example_generate.py
+
+These examples demonstrate how to handle non-code-modification user queries while maintaining the same overall structure as the code generation workflow.
+
+This concludes a fully working implementation.
+
+=========================以上内容为历史执行过程，所有代码改动均已经生效========================================
+
+
+# 用户需求
+
+
+    将 example_chat_process.py 和 example_code_generate.py的流程整合到 workflow_engine.py 中，目前两个代码文件都是写代码和回复用户的完整流程。
+    使用DecisionEnvironment来决策选择何种模式。
+    

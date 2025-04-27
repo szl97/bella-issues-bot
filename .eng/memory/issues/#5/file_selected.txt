@@ -1,0 +1,7 @@
+core/workflow_engine.py
+client/README.md
+core/git_manager.py
+client/cli.py
+client/runner.py
+client/terminal.py
+pyproject.toml

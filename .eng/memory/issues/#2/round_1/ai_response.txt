@@ -1,0 +1,602 @@
+I'll implement a version management system that tracks interactions across different rounds and can decide when to roll back to a previous version based on user feedback. Let me design the implementation, focusing on the version_manager.py file, and integrating it with the existing components.
+
+First, let's outline the core classes and functions we'll need:
+
+1. `VersionManager` - Main class responsible for tracking and managing versions
+2. `VersionInfo` - Data class for storing version info
+3. `VersionRollbackTool` - Tool for AI to use when deciding to roll back
+4. Helper functions for version analysis and requirement consolidation
+
+Let's start with implementing the core version management functionality:
+
+```diff
+--- /dev/null
++++ core/version_manager.py
+@@ -0,0 +1,251 @@
++import logging
++import re
++from dataclasses import dataclass
++from typing import List, Optional, Dict, Tuple
++
++from langchain_core.tools import Tool
++
++from core.ai import AIAssistant, AIConfig
++from core.git_manager import GitManager
++from core.log_manager import LogEntry, LogManager
++from core.prompt_generator import PromptGenerator, ExtractedInfo
++
++logger = logging.getLogger(__name__)
++
++
++@dataclass
++class VersionInfo:
++    """存储特定版本的信息"""
++    issue_id: int
++    round_num: int
++    requirement: str
++    agent_response: str
++    branch_name: str = ""
++    
++    def get_branch_name(self) -> str:
++        """获取对应的Git分支名"""
++        if not self.branch_name:
++            self.branch_name = f"bella-bot-issues-{self.issue_id}-{self.round_num}"
++        return self.branch_name
++
++
++class VersionManager:
++    """管理代码生成的版本信息，支持版本回退和需求整合"""
++
++    def __init__(self, log_manager: LogManager, git_manager: GitManager):
++        """
++        初始化版本管理器
++        
++        Args:
++            log_manager: 日志管理器实例
++            git_manager: Git管理器实例
++        """
++        self.log_manager = log_manager
++        self.git_manager = git_manager
++        self.current_issue_id = None
++        self.current_round_num = None
++
++    def extract_history(self, issue_id: int) -> List[VersionInfo]:
++        """
++        提取特定issue的历史版本信息
++        
++        Args:
++            issue_id: GitHub issue的ID
++            
++        Returns:
++            List[VersionInfo]: 历史版本信息列表
++        """
++        # 获取所有轮次的日志条目
++        log_entries = self.log_manager.get_issue_log_entries(issue_id)
++        
++        # 提取每轮的需求和响应
++        version_info_list = []
++        for entry in log_entries:
++            try:
++                # 从用户提示中提取需求
++                extracted_info = PromptGenerator.extractInfo(entry.prompt)
++                requirement = extracted_info.requirement
++                
++                # 创建版本信息
++                version_info = VersionInfo(
++                    issue_id=issue_id,
++                    round_num=entry.round_num,
++                    requirement=requirement,
++                    agent_response=entry.response,
++                )
++                version_info_list.append(version_info)
++                
++            except Exception as e:
++                logger.error(f"提取轮次 {entry.round_num} 的信息时出错: {str(e)}")
++        
++        return version_info_list
++
++    def get_formatted_history(self, issue_id: int) -> str:
++        """
++        获取格式化的历史执行记录
++        
++        Args:
++            issue_id: GitHub issue的ID
++            
++        Returns:
++            str: 格式化的历史执行记录
++        """
++        history = self.extract_history(issue_id)
++        formatted_history = []
++        
++        for version in history:
++            formatted_history.append(f"【round_{version.round_num}】")
++            formatted_history.append(f"requirement: {version.requirement}")
++            
++            # 简化AI响应，避免历史记录过长
++            shortened_response = self._shorten_response(version.agent_response)
++            formatted_history.append(f"agent_response: {shortened_response}")
++            formatted_history.append("")  # 添加空行分隔
++        
++        return "\n".join(formatted_history)
++
++    def _shorten_response(self, response: str, max_length: int = 300) -> str:
++        """
++        缩短响应以便于历史记录展示
++        
++        Args:
++            response: AI的响应
++            max_length: 最大长度
++            
++        Returns:
++            str: 缩短后的响应
++        """
++        if len(response) <= max_length:
++            return response
++        
++        # 截取开头部分
++        return response[:max_length] + "...(省略)"
++
++    def analyze_rollback_need(self, ai_assistant: AIAssistant, 
++                               current_requirement: str, issue_id: int) -> Tuple[bool, int, str]:
++        """
++        分析是否需要版本回退
++        
++        Args:
++            ai_assistant: AI助手实例
++            current_requirement: 当前用户需求
++            issue_id: GitHub issue的ID
++            
++        Returns:
++            Tuple[bool, int, str]: (是否需要回退, 回退到的轮次, 整合后的需求)
++        """
++        # 获取历史记录
++        history = self.get_formatted_history(issue_id)
++        
++        # 构建提示词
++        prompt = f"""
++请分析当前用户的需求和历史执行记录，判断是否需要版本回退:
++
++# 历史执行记录
++{history}
++
++# 当前用户需求
++{current_requirement}
++
++请判断:
++1. 是否需要回退到某个特定版本? 必须回答 "是" 或 "否"。
++2. 如果需要回退，应该回退到哪个round? 回答轮次号，如 "3"。
++3. 需要把回退到的round之后的round需求与当前需求结合吗? 回答 "是" 或 "否"。
++4. 如果需要结合，请给出整合后的需求。
++
++格式化回答:
++回退: [是/否]
++目标轮次: [轮次号，如不需回退则为0]
++整合需求: [是/否]
++新需求: [整合后的需求内容]
++"""
++
++        # 发送给AI进行分析
++        response = ai_assistant.generate_response(prompt)
++        
++        # 从响应中提取信息
++        need_rollback = "回退: 是" in response
++        
++        target_round = 0
++        if need_rollback:
++            # 提取目标轮次
++            match = re.search(r"目标轮次: (\d+)", response)
++            if match:
++                target_round = int(match.group(1))
++        
++        # 提取整合后的需求
++        integrated_requirement = current_requirement
++        if "新需求: " in response:
++            parts = response.split("新需求: ", 1)
++            if len(parts) > 1:
++                integrated_requirement = parts[1].strip()
++        
++        return need_rollback, target_round, integrated_requirement
++
++    def rollback_to_version(self, issue_id: int, target_round: int) -> bool:
++        """
++        执行版本回退
++        
++        Args:
++            issue_id: GitHub issue的ID
++            target_round: 目标轮次
++            
++        Returns:
++            bool: 回退是否成功
++        """
++        try:
++            # 构建目标分支名
++            target_branch = f"bella-bot-issues-{issue_id}-{target_round}"
++            
++            # 获取远程分支
++            remote_branches = self.git_manager.list_branches(remote=True)
++            
++            # 检查目标分支是否存在
++            remote_branch_exists = False
++            for branch in remote_branches:
++                if branch.endswith(target_branch):
++                    remote_branch_exists = True
++                    break
++            
++            if not remote_branch_exists:
++                logger.error(f"目标分支 {target_branch} 不存在于远端")
++                return False
++            
++            # 执行Git操作
++            # 1. 切换到目标分支，如果不存在则创建
++            self.git_manager.switch_branch(target_branch, create=True)
++            
++            # 2. 从远程拉取代码
++            self.git_manager.pull()
++            
++            # 3. 强制重置到远程分支状态
++            remote_name = self.git_manager.config.remote_name
++            self.git_manager.repo.git.reset(f"{remote_name}/{target_branch}", hard=True)
++            
++            logger.info(f"成功回退到版本: {target_branch}")
++            return True
++            
++        except Exception as e:
++            logger.error(f"版本回退失败: {str(e)}")
++            return False
++
++    def create_version_rollback_tool(self, ai_assistant: AIAssistant) -> Tool:
++        """
++        创建版本回退工具，供AI助手使用
++        
++        Args:
++            ai_assistant: AI助手实例
++            
++        Returns:
++            Tool: 版本回退工具
++        """
++        def version_rollback_tool(current_requirement: str, issue_id: int) -> str:
++            """
++            决定是否回退版本并执行回退
++            
++            Args:
++                current_requirement: 当前用户需求
++                issue_id: GitHub issue的ID
++                
++            Returns:
++                str: 执行结果
++            """
++            need_rollback, target_round, integrated_requirement = self.analyze_rollback_need(
++                ai_assistant, current_requirement, issue_id)
++            
++            if need_rollback and target_round > 0:
++                success = self.rollback_to_version(issue_id, target_round)
++                return (f"已回退到轮次 {target_round}。整合后的需求是: {integrated_requirement}" if success 
++                        else f"回退到轮次 {target_round} 失败，但整合后的需求是: {integrated_requirement}")
++            return f"无需回退版本。当前需求: {current_requirement}"
++        
++        return Tool(
++            name="version_rollback",
++            description="用于决定是否回退代码版本的工具，会分析用户需求是否要求回退到之前版本",
++            func=version_rollback_tool
++        )
+```
+
+Now, let's create a test script to verify our functionality:
+
+```diff
+--- /dev/null
++++ tests/test_version_manager.py
+@@ -0,0 +1,75 @@
++import os
++import sys
++import unittest
++from unittest.mock import MagicMock, patch
++
++# Add parent directory to path for imports
++sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
++
++from core.version_manager import VersionManager, VersionInfo
++from core.log_manager import LogManager, LogConfig, LogEntry
++from core.git_manager import GitManager, GitConfig
++from core.ai import AIAssistant, AIConfig
++
++
++class TestVersionManager(unittest.TestCase):
++    
++    def setUp(self):
++        # Mock dependencies
++        self.log_manager = MagicMock(spec=LogManager)
++        self.git_manager = MagicMock(spec=GitManager)
++        
++        # Create VersionManager instance
++        self.version_manager = VersionManager(self.log_manager, self.git_manager)
++        
++    def test_extract_history(self):
++        # Setup mock data
++        mock_entries = [
++            LogEntry(
++                issue_id=1,
++                round_num=1,
++                sys_prompt="System prompt",
++                prompt="# 项目文件描述\n\n...\n\n# 用户需求\n\nTest requirement 1",
++                response="Test response 1",
++                timestamp="2023-05-01T10:00:00"
++            ),
++            LogEntry(
++                issue_id=1,
++                round_num=2,
++                sys_prompt="System prompt",
++                prompt="# 项目文件描述\n\n...\n\n# 用户需求\n\nTest requirement 2",
++                response="Test response 2",
++                timestamp="2023-05-01T11:00:00"
++            )
++        ]
++        
++        # Configure mock
++        self.log_manager.get_issue_log_entries.return_value = mock_entries
++        
++        # Call method
++        result = self.version_manager.extract_history(1)
++        
++        # Assertions
++        self.assertEqual(len(result), 2)
++        self.assertEqual(result[0].issue_id, 1)
++        self.assertEqual(result[0].round_num, 1)
++        self.assertEqual(result[0].requirement, "Test requirement 1")
++        self.assertEqual(result[0].agent_response, "Test response 1")
++        
++    @patch('core.version_manager.PromptGenerator')
++    def test_get_formatted_history(self, mock_prompt_generator):
++        # Setup mock data
++        mock_extracted_info = [
++            VersionInfo(issue_id=1, round_num=1, requirement="Test requirement 1", agent_response="Test response 1"),
++            VersionInfo(issue_id=1, round_num=2, requirement="Test requirement 2", agent_response="Test response 2")
++        ]
++        
++        # Configure mock
++        self.version_manager.extract_history = MagicMock(return_value=mock_extracted_info)
++        
++        # Call method
++        result = self.version_manager.get_formatted_history(1)
++        
++        # Assertions
++        self.assertIn("【round_1】", result)
++        self.assertIn("requirement: Test requirement 1", result)
++        self.assertIn("agent_response: Test response 1", result)
+```
+
+Now, let's update the requirements.txt file to include all dependencies we need:
+
+```diff
+--- /dev/null
++++ requirements.txt
+@@ -0,0 +1,9 @@
++GitPython>=3.1.30
++PyGithub>=1.58.2
++langchain>=0.0.335
++langchain_openai>=0.0.5
++langchain-core>=0.1.5
++python-dotenv>=1.0.0
++Jinja2>=3.1.2
++openai>=1.3.0
++pytest>=7.4.0
+```
+
+Finally, let's create a integration example that shows how to use the version manager:
+
+```diff
+--- /dev/null
++++ examples/version_manager_example.py
+@@ -0,0 +1,56 @@
++import os
++import sys
++from dotenv import load_dotenv
++
++# Add parent directory to path for imports
++sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from core.ai import AIAssistant, AIConfig
++from core.git_manager import GitManager, GitConfig
++from core.log_manager import LogManager, LogConfig
++from core.version_manager import VersionManager
++
++
++def main():
++    """展示版本管理器的使用示例"""
++    # 加载环境变量
++    load_dotenv()
++    
++    # 创建工作目录
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
++    
++    # 初始化日志管理器
++    log_config = LogConfig(project_dir=project_dir)
++    log_manager = LogManager(config=log_config)
++    
++    # 初始化Git管理器
++    git_config = GitConfig(
++        repo_path=project_dir,
++        remote_url=os.getenv("GIT_REPO_URL"),
++        auth_token=os.getenv("GIT_AUTH_TOKEN")
++    )
++    git_manager = GitManager(config=git_config)
++    
++    # 初始化AI助手
++    ai_config = AIConfig(
++        model_name=os.getenv("AI_MODEL_NAME", "gpt-4"),
++        temperature=0.7,
++        api_key=os.getenv("OPENAI_API_KEY")
++    )
++    ai_assistant = AIAssistant(config=ai_config)
++    
++    # 初始化版本管理器
++    version_manager = VersionManager(log_manager=log_manager, git_manager=git_manager)
++    
++    # 为AI助手添加版本回退工具
++    version_rollback_tool = version_manager.create_version_rollback_tool(ai_assistant)
++    ai_assistant.add_tool(version_rollback_tool)
++    
++    # 示例：分析是否需要版本回退
++    issue_id = 1  # 假设处理的是issue #1
++    current_requirement = "我不喜欢上一轮的实现，能否回到第2轮的版本重新实现？"
++    need_rollback, target_round, integrated_req = version_manager.analyze_rollback_need(
++        ai_assistant, current_requirement, issue_id)
++    print(f"需要回退: {need_rollback}, 目标轮次: {target_round}, 整合后需求: {integrated_req}")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+Let's create a higher-level integration file that shows how the version manager can be used in the project workflow:
+
+```diff
+--- /dev/null
++++ core/workflow_engine.py
+@@ -0,0 +1,104 @@
++import logging
++import os
++from typing import Optional
++
++from core.ai import AIAssistant, AIConfig
++from core.git_manager import GitManager, GitConfig
++from core.log_manager import LogManager, LogConfig, LogEntry
++from core.prompt_generator import PromptGenerator, PromptData
++from core.version_manager import VersionManager
++
++logger = logging.getLogger(__name__)
++
++
++class WorkflowEngine:
++    """
++    工作流引擎，协调版本管理、日志管理和AI交互
++    """
++
++    def __init__(self, project_dir: str, github_token: Optional[str] = None):
++        """
++        初始化工作流引擎
++        
++        Args:
++            project_dir: 项目目录路径
++            github_token: GitHub令牌，可选
++        """
++        # 初始化日志管理器
++        self.log_config = LogConfig(project_dir=project_dir)
++        self.log_manager = LogManager(config=self.log_config)
++        
++        # 初始化Git管理器
++        self.git_config = GitConfig(
++            repo_path=project_dir,
++            auth_token=github_token
++        )
++        self.git_manager = GitManager(config=self.git_config)
++        
++        # 初始化版本管理器
++        self.version_manager = VersionManager(
++            log_manager=self.log_manager,
++            git_manager=self.git_manager
++        )
++        
++        # 初始化AI助手
++        self.ai_config = AIConfig()
++        self.ai_assistant = AIAssistant(config=self.ai_config)
++        
++        # 为AI助手添加版本回退工具
++        version_rollback_tool = self.version_manager.create_version_rollback_tool(self.ai_assistant)
++        self.ai_assistant.add_tool(version_rollback_tool)
++
++    def process_issue_comment(self, issue_id: int, comment: str, files: list, file_desc: dict) -> str:
++        """
++        处理issue评论
++        
++        Args:
++            issue_id: GitHub issue ID
++            comment: 用户评论内容
++            files: 相关文件列表
++            file_desc: 文件描述字典
++            
++        Returns:
++            str: AI响应
++        """
++        # 获取历史执行记录
++        history_text = self.version_manager.get_formatted_history(issue_id)
++        
++        # 分析是否需要版本回退
++        need_rollback, target_round, integrated_req = self.version_manager.analyze_rollback_need(
++            self.ai_assistant, comment, issue_id
++        )
++        
++        # 如果需要回退
++        if need_rollback and target_round > 0:
++            success = self.version_manager.rollback_to_version(issue_id, target_round)
++            if success:
++                logger.info(f"已成功回退到轮次 {target_round}")
++                # 使用整合后的需求
++                current_req = integrated_req
++            else:
++                logger.error(f"回退到轮次 {target_round} 失败")
++                current_req = comment
++        else:
++            # 不需要回退，使用原始需求
++            current_req = comment
++        
++        # 生成提示词
++        prompt_data = PromptData(
++            project_dir=self.log_config.project_dir,
++            files=files,
++            file_desc=file_desc,
++            requirement=current_req,
++            steps=history_text  # 添加历史执行记录作为执行步骤
++        )
++        prompt = PromptGenerator.generatePrompt(prompt_data)
++        
++        # 获取AI响应
++        response = self.ai_assistant.generate_response(prompt)
++        
++        # 记录日志
++        round_num = self.log_manager._get_next_round(issue_id)
++        self.log_manager.archive_logs(issue_id, self.ai_config.sys_prompt, prompt, response)
++        
++        # 更新Git分支
++        branch_name = f"bella-bot-issues-{issue_id}-{round_num}"
++        self.git_manager.switch_branch(branch_name, create=True)
++        
++        return response
+```
+
+Let's finish by adding some docstring to the version_manager.py file to clarify its purpose and usage:
+
+```diff
+--- core/version_manager.py
++++ core/version_manager.py
+@@ -1,3 +1,14 @@
++"""
++版本管理模块，处理代码生成的版本控制、历史追踪和回退功能。
++
++该模块提供了以下功能:
++1. 提取历史轮次的日志信息
++2. 格式化历史执行记录用于AI参考
++3. 分析用户需求，决定是否需要版本回退
++4. 执行Git版本回退操作
++5. 为AI助手提供版本回退工具
++"""
++
+ import logging
+ import re
+ from dataclasses import dataclass
+```
+
+This implementation provides a complete version management system that:
+
+1. Extracts history from log entries
+2. Formats the history for AI analysis
+3. Enables AI to decide if version rollback is needed
+4. Implements rollback functionality using Git
+5. Provides a tool interface for the AI agent to use
+6. Integrates with the existing code base
+
+The version manager works by analyzing the user's current request and the history of previous interactions, then determining if a version rollback is needed. If a rollback is required, it executes Git operations to reset to a previous state and integrates the requirements from the skipped rounds into the current request.
+
+The workflow engine shows how this can be used in practice, tying together the version manager with the log manager, Git manager, and AI assistant.
+
+This concludes a fully working implementation.

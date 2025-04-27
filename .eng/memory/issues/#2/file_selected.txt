@@ -1,0 +1,6 @@
+core/version_manager.py
+core/log_manager.py
+core/prompt_generator.py
+core/git_manager.py
+core/git_manager.py
+core/ai.py

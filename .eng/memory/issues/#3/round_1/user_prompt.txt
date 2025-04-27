@@ -1,0 +1,379 @@
+# 项目文件描述
+
+
+- core/code_engineer.py: 代码工程师模块，负责处理用户需求、调用AI模型生成代码并应用变更。CodeEngineer类整合系统提示词、AI响应和Diff处理，是代码生成和修改的核心执行器。
+
+- examples/example_generate.py: 无描述
+
+- generate.py: 主程序入口文件，负责加载环境变量、读取用户和AI响应数据，并使用FileSelector处理特定需求，演示了版本信息管理和回退功能的使用场景。
+
+- test.py: 测试脚本，演示了如何使用GPTEngineerClient客户端与API交互，实现代码修改和生成功能，指定了API端点和模型参数。
+
+
+# 文件内容
+
+
+
+```
+File: core/code_engineer.py
+1 import logging
+2 import os
+3 from dataclasses import dataclass
+4 
+5 from dotenv import load_dotenv
+6 from typing_extensions import Optional
+7 from core.ai import AIAssistant, AIConfig
+8 from core.diff import Diff
+9 from core.log_manager import LogManager, LogConfig
+10 
+11 logger = logging.getLogger(__name__)
+12 
+13 
+14 @dataclass
+15 class CodeEngineerConfig:
+16     """代码工程师配置"""
+17     project_dir: str
+18     ai_config: AIConfig
+19     system_prompt: Optional[str] = None
+20     max_retries: int = 3
+21 
+22 
+23 class CodeEngineer:
+24     """
+25     代码工程师类，负责处理用户的 prompt，与 AI 模型交互，解析 diff 并修改文件
+26     """
+27 
+28     def __init__(self, config: CodeEngineerConfig, log_manager: LogManager, diff: Diff):
+29         """
+30         初始化代码工程师
+31 
+32         Args:
+33             config: CodeEngineerConfig 实例，包含必要的配置信息
+34             log_manager: LogManager 实例，用于日志管理
+35         """
+36         self.config = config
+37         self.log_manager = log_manager
+38         self.diff = diff
+39 
+40 
+41         if config.system_prompt:
+42             self.system_prompt = config.system_prompt
+43         else:
+44             # 读取系统提示词
+45             self.system_prompt = self._read_system_prompt()
+46 
+47         config.ai_config.sys_prompt = self.system_prompt
+48         self.ai_assistant = AIAssistant(config=config.ai_config)
+49         # 用于存储处理失败的文件
+50         self.failed_files = []
+51 
+52     def _read_system_prompt(self) -> str:
+53         """
+54         读取系统提示词
+55 
+56         Returns:
+57             str: 系统提示词内容
+58         """
+59         try:
+60             system_prompt_path = os.path.join(self.config.project_dir, "system.txt")
+61             if os.path.exists(system_prompt_path):
+62                 with open(system_prompt_path, "r", encoding="utf-8") as f:
+63                     return f.read()
+64             else:
+65                 logger.warning(f"系统提示词文件不存在: {system_prompt_path}，使用默认提示词")
+66                 return "You will get instructions for code to write. Output requested code changes in the unified git diff syntax."
+67         except Exception as e:
+68             logger.error(f"读取系统提示词失败: {str(e)}")
+69             return "You will get instructions for code to write. Output requested code changes in the unified git diff syntax."
+70 
+71     def process_prompt(self, prompt: str, issue_id: int) -> bool:
+72         """
+73         处理用户的 prompt，与 AI 模型交互，解析 diff 并修改文件
+74 
+75         Args:
+76             prompt: 用户的 prompt
+77             issue_id: GitHub issue 的 ID
+78 
+79         Returns:
+80             bool: 处理是否成功
+81         """
+82         try:
+83             # 重置失败文件列表
+84             self.failed_files = []
+85             
+86             # 设置 AI 助手的系统提示词
+87             self.ai_assistant.config.sys_prompt = self.system_prompt
+88             
+89             # 调用 AI 模型生成响应
+90             response = self.ai_assistant.generate_response(prompt)
+91             
+92             # 解析响应中的 diff
+93             diffs = Diff.parse_diffs_from_text(response)
+94             
+95             if not diffs:
+96                 logger.warning("未找到有效的 diff")
+97                 return False
+98             
+99             # 处理每个 diff
+100             self.failed_files = self.diff.process_diffs(diffs, self.config.project_dir)
+101             
+102             # 归档日志
+103             self.log_manager.archive_logs(
+104                 sys_prompt=self.system_prompt,
+105                 prompt=prompt,
+106                 response=response
+107             )
+108             
+109             # 如果有失败的文件，可以在这里处理
+110             if self.failed_files:
+111                 logger.warning(f"有 {len(self.failed_files)} 个文件处理失败")
+112                 # 这里可以添加失败文件的重试逻辑，但根据需求，暂时不实现
+113                 return False
+114             
+115             return True
+116         except Exception as e:
+117             logger.error(f"处理 prompt 失败: {str(e)}")
+118             return False
+119 
+120     def retry_failed_files(self, prompt: str, issue_id: int) -> bool:
+121         """
+122         重试处理失败的文件（钩子方法，暂不实现具体逻辑）
+123 
+124         Args:
+125             prompt: 用户的 prompt
+126             issue_id: GitHub issue 的 ID
+127 
+128         Returns:
+129             bool: 重试是否成功
+130         """
+131         # 这是一个钩子方法，用于未来扩展
+132         # 根据需求，暂时不实现具体逻辑
+133         logger.info(f"重试处理失败的文件: {self.failed_files}")
+134         return False
+135 
+136 if __name__ == "__main__":
+137     load_dotenv()
+138     prompt = '''
+139     '''
+140     config = CodeEngineerConfig(project_dir="../.", ai_config=AIConfig(
+141         temperature=1,
+142         model_name="claude-3.7-sonnet"
+143     ))
+144 
+145     engineer = CodeEngineer(config, LogManager(LogConfig("../.", 1)), Diff(AIConfig(temperature=0.1,
+146                                                                                  model_name="gpt-4o")))
+147     engineer.process_prompt(prompt, 1)
+148
+```
+
+
+
+
+```
+File: examples/example_generate.py
+1 import os
+2 import sys
+3 from dotenv import load_dotenv
+4 
+5 from core.code_engineer import CodeEngineerConfig, CodeEngineer
+6 from core.diff import Diff
+7 from core.file_memory import FileMemory
+8 from core.file_selector import FileSelector
+9 from core.prompt_generator import PromptGenerator, PromptData
+10 
+11 # Add parent directory to path for imports
+12 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+13 
+14 from core.ai import AIAssistant, AIConfig
+15 from core.git_manager import GitManager, GitConfig
+16 from core.log_manager import LogManager, LogConfig
+17 from core.version_manager import VersionManager
+18 
+19 
+20 def main():
+21     # 加载环境变量
+22     load_dotenv()
+23     
+24     # 创建工作目录
+25     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+26 
+27     issue_id = 3
+28     
+29     # 初始化日志管理器
+30     log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
+31     log_manager = LogManager(config=log_config)
+32     current_round = log_manager.get_current_round()
+33 
+34     
+35     # 初始化Git管理器
+36     git_config = GitConfig(
+37         repo_path=project_dir
+38     )
+39     git_manager = GitManager(config=git_config)
+40     branch_name = git_manager.get_issues_branch_name(issue_id, current_round)
+41     
+42     # 初始化AI助手
+43     ai_config = AIConfig(
+44         model_name="coder-model",
+45         temperature=issue_id
+46     )
+47     
+48     # 初始化版本管理器
+49     version_manager = VersionManager(issue_id=issue_id, log_manager=log_manager, git_manager=git_manager, ai_config=ai_config)
+50 
+51     current_requirement = "新增一个example文件，展示如果调用code_engineer写代码"
+52     requirement, history = version_manager.ensure_version_and_generate_context(current_requirement)
+53 
+54     git_manager.switch_branch(branch_name, True)
+55 
+56     selector = FileSelector(
+57         project_dir,
+58         issue_id,
+59         ai_config=AIConfig(temperature=1, model_name="coder-model"),
+60     )
+61 
+62     files = selector.select_files_for_requirement_with_log(requirement)
+63 
+64     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+65 
+66     data = PromptData(requirement=requirement, project_dir=project_dir, steps = history, files=files, file_desc=descriptions)
+67     user_prompt = PromptGenerator.generatePrompt(data)
+68     config = CodeEngineerConfig(project_dir=project_dir, ai_config=AIConfig(
+69         temperature=1,
+70         model_name="coder-model"
+71     ))
+72 
+73     engineer = CodeEngineer(config, LogManager(LogConfig(project_dir=project_dir, issue_id=issue_id)), Diff(AIConfig(temperature=0.1,
+74                                                                                                               model_name="gpt-4o")))
+75     engineer.process_prompt(prompt=user_prompt, issue_id=issue_id)
+76 
+77     git_manager.commit(f"issues#{issue_id}-generate by Bella-Issues-Bot")
+78 
+79 
+80     git_manager.push(branch=branch_name, force=True)
+81 
+82 if __name__ == "__main__":
+83     main()
+84
+```
+
+
+
+
+```
+File: generate.py
+1 import os
+2 
+3 from dotenv import load_dotenv
+4 
+5 from core.ai import AIConfig
+6 from core.code_engineer import CodeEngineerConfig, CodeEngineer
+7 from core.diff import Diff
+8 from core.file_memory import FileMemory
+9 from core.file_selector import FileSelector
+10 from core.log_manager import LogManager, LogConfig
+11 from core.prompt_generator import PromptData, PromptGenerator
+12 
+13 
+14 def main():
+15     load_dotenv()
+16 
+17     requirement = f"""
+18     ##背景：
+19     此项目是一个根据用户issues生成代码并回复的Agent，一轮回复后，用户可能会可能会进行评论，每一轮交互的log都保存在格式为
+20     project_dir/.eng/memory/isseus/#1/round_1的目录下
+21     
+22     每一个文件都会严格按照该格式进行保存
+23     ##任务：
+24     实现一个版本信息管理，根据交互的过程，确定当前版本，并给出当前版本的历史执行过程作为本轮对话的memory。
+25     ###主流程
+26     0、先通过代码提取所有文件的有效信息
+27     1、AI来决策是否需要版本回退，意思是之前的操作如果被用户全盘否定，那么就需要回退操作状态。
+28     3、版本回退解释
+29         当前issues#1执行到round_6，但是AI判断用户不想要round4和round5改的代码，希望重新改，那么就应该
+30         1）把git状态回退到round3，拉取远端的bella-bot-issues-1-3，并hard reset
+31         2) 将提取出的round_4和round_5结合当前用户需求，整合为一个新的需求，作为用户本轮的需求
+32     4、将用户的本轮需求作为当前任务，提取出的信息作为执行过程
+33 
+34     
+35     ###通过代码提取
+36     0、通过log_manager.LogManager#get_issue_log_entries 获取所有轮次的日志信息，进行如下处理
+37     
+38     1、步骤0提取的prompt通过PromptGenerator.extractInfo提取requirement，着就是该轮的用户需求
+39     
+40     2、步骤1提取requirement和步骤0提取的response，分别用requirement 和 agent_response 来标识
+41     
+42     3、不同轮次之间要有标识，如：
+43     【round_1】
+44     
+45     ###AI决策
+46     使用ai.py
+47     根据用户本轮的需求，结合历史执行记录，判断是否需要回退版本。
+48     如果需要则将回退的版本信息和用户当前需求进行整合，作为本轮需求。
+49     并且执行版本回退工具。
+50     版本回退作为一个工具，参数为current_requirement和round_num。AI来决定是否调用。
+51     """
+52 
+53     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "."))
+54     selector = FileSelector(
+55         project_dir,
+56         2,
+57         ai_config=AIConfig(temperature=1, model_name="coder-model"),
+58     )
+59 
+60     files = selector.select_files_for_requirement_with_log(requirement)
+61 
+62     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+63 
+64     data = PromptData(project_dir = project_dir, files=files, file_desc=descriptions, requirement=requirement, steps=None)
+65 
+66     prompt = PromptGenerator.generatePrompt(data)
+67 
+68     config = CodeEngineerConfig(project_dir=project_dir, ai_config=AIConfig(
+69         temperature=1,
+70         model_name="coder-model"
+71     ))
+72 
+73     engineer = CodeEngineer(config, LogManager(LogConfig(project_dir=project_dir, issue_id=2)), Diff(AIConfig(temperature=0.1,
+74                                                                                  model_name="gpt-4o")))
+75     engineer.process_prompt(prompt, 2)
+76 
+77 if __name__ == "__main__":
+78     main()
+79
+```
+
+
+
+
+```
+File: test.py
+1 from gpt_engineer.applications.cli.gpt_engineer_client import GPTEngineerClient
+2 
+3 def main():
+4     # 创建客户端实例
+5     client = GPTEngineerClient(
+6         project_path="/Users/saizhuolin/test/bella-openapi",
+7         openai_api_key="",
+8         openai_api_base="https://test-bella-openapi.ke.com/v1",  # 可选
+9         model="coder-model",
+10         temperature=1
+11     )
+12     # 生成代码
+13     files = client.improve(prompt = "【代码分析与修改规范】请遵循以下步骤进行代码修改：\n1、深度代码分析阶段\n绘制模块依赖图：分析所有关联代码文件，标注各模块的输入输出和依赖关系\n2、功能映射表：为每个文件创建功能说明（包含：核心职责、调用关系、关键接口）\n3、识别敏感区域：标记出会影响核心功能的关键代码段\n4、安全修改准则\n影响评估清单：必须验证修改不会影响：\n✓ 现有 API 接口契约\n✓ 数据流关键路径\n✓ 跨模块交互协议\n4、框架化开发要求\n风格统一检查表：\n√ 命名规范（类 / 方法 / 变量前缀后缀）\n√ 代码组织结构（包 / 目录层级）\n√ 注释模板\n扩展性设计：\n→ 采用开放封闭原则（OCP）\n→ 预留扩展点（extension points）\n→ 配置驱动而非硬编码\n→ 重要接口添加。\n**********用户要求：你的任务是为/v1/chat/completions实现一个备选模型的功能。用户请求，可以传入两个模型，用“，”分割。当第一个模型不可用时，选择 第二个模型。**************comment：应该新增一个Adpaptor来处理*******注意：你可以新增文件，但是如果要修改的文件，文件名一定要和我提供的一致，否则程序会报错！！",
+14                            no_execution=False)
+15 
+16     # 处理生成的文件
+17     for file_path, content in files.items():
+18         print(f"Generated file: {file_path}, content: {content}")
+19  
+20 if __name__ == "__main__":
+21     main()
+```
+
+
+
+
+# 用户需求
+
+新增一个example文件，展示如果调用code_engineer写代码

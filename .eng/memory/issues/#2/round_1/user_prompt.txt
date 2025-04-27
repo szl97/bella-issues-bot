@@ -1,0 +1,1839 @@
+# 项目文件描述
+
+
+- core/version_manager.py: 无描述
+
+- core/log_manager.py: 日志管理核心模块，包含LogManager类负责代码生成日志的存档和检索，提供了存储和读取不同轮次交互日志的功能，使用LogConfig进行配置，支持按issue和轮次管理日志记录。
+
+- core/prompt_generator.py: 提示词生成工具，负责根据文件描述、内容和需求生成结构化提示。包含PromptGenerator类，使用Jinja2模板系统构建AI提示，支持信息提取和格式化。
+
+- core/git_manager.py: Git操作管理模块，提供GitManager类实现仓库克隆、分支管理、提交、推送等Git操作，支持身份验证和远程仓库交互，还能处理GitHub Issues评论。
+
+- core/git_manager.py: Git操作管理模块，提供GitManager类实现仓库克隆、分支管理、提交、推送等Git操作，支持身份验证和远程仓库交互，还能处理GitHub Issues评论。
+
+- core/ai.py: AI助手模块，提供与AI模型交互的核心功能。包含AIAssistant类用于处理提示和响应，支持工具集成和代理执行，是AI功能的统一接口。
+
+
+# 文件内容
+
+
+
+```
+File: core/version_manager.py
+1
+```
+
+
+
+
+```
+File: core/log_manager.py
+1 import glob
+2 import logging
+3 import os
+4 import datetime
+5 from dataclasses import dataclass, field
+6 from typing import List, Optional
+7 
+8 logger = logging.getLogger(__name__)
+9 
+10 
+11 @dataclass
+12 class LogConfig:
+13     """日志管理配置"""
+14 
+15     project_dir: str
+16     logs_dir: str = "memory/logs"
+17     issues_dir: str = "memory/issues"
+18     base_dir: str = ".eng"
+19 
+20 
+21 @dataclass
+22 class LogEntry:
+23     """存储单次代码生成日志的数据类"""
+24     issue_id: int
+25     round_num: int
+26     sys_prompt: str
+27     prompt: str
+28     response: str
+29     timestamp: str = field(default_factory=lambda: datetime.datetime.now().isoformat())
+30     log_path: str = ""
+31 
+32 
+33 class LogManager:
+34     """管理代码生成日志的存档和检索"""
+35 
+36     def __init__(self, config: LogConfig):
+37         """
+38         初始化日志管理器
+39 
+40         Args:
+41             config: LogConfig实例，包含必要的配置信息
+42         """
+43         self.config = config
+44         self.logs_path = os.path.join(
+45             self.config.project_dir, self.config.base_dir, self.config.logs_dir
+46         )
+47         self.issues_path = os.path.join(
+48             self.config.project_dir, self.config.base_dir, self.config.issues_dir
+49         )
+50 
+51         # 确保必要的目录存在
+52         os.makedirs(self.logs_path, exist_ok=True)
+53         os.makedirs(self.issues_path, exist_ok=True)
+54 
+55         # 定义日志文件名常量
+56         self.SYS_PROMPT_FILE = "system_prompt.txt"
+57         self.USER_PROMPT_FILE = "user_prompt.txt"
+58         self.AI_RESPONSE_FILE = "ai_response.txt"
+59         self.TIMESTAMP_FILE = "timestamp.txt"
+60 
+61     def archive_logs(self, issue_id: int, sys_prompt: str, prompt: str, response: str) -> str:
+62         """
+63         将代码生成日志存档到指定的目录
+64 
+65         Args:
+66             issue_id: GitHub issue的ID
+67             sys_prompt: 系统提示词
+68             prompt: 用户提示词
+69             response: AI响应
+70 
+71         Returns:
+72             str: 存档目录的路径
+73         """
+74         # 获取下一个轮次号
+75         round_num = self._get_next_round(issue_id)
+76 
+77         # 获取当前时间戳
+78         timestamp = datetime.datetime.now().isoformat()
+79         
+80         # 创建issue目录
+81         issue_dir = os.path.join(self.issues_path, f"#{issue_id}")
+82         os.makedirs(issue_dir, exist_ok=True)
+83         
+84         # 创建轮次目录
+85         round_dir = os.path.join(issue_dir, f"round_{round_num}")
+86         os.makedirs(round_dir, exist_ok=True)
+87         
+88         # 保存系统提示词
+89         with open(os.path.join(round_dir, self.SYS_PROMPT_FILE), "w", encoding="utf-8") as f:
+90             f.write(sys_prompt)
+91         
+92         # 保存用户提示词
+93         with open(os.path.join(round_dir, self.USER_PROMPT_FILE), "w", encoding="utf-8") as f:
+94             f.write(prompt)
+95         
+96         # 保存AI响应
+97         with open(os.path.join(round_dir, self.AI_RESPONSE_FILE), "w", encoding="utf-8") as f:
+98             f.write(response)
+99             
+100         # 保存时间戳
+101         with open(os.path.join(round_dir, self.TIMESTAMP_FILE), "w", encoding="utf-8") as f:
+102             f.write(timestamp)
+103         
+104         # 记录日志
+105         logger.info(f"已将日志存档至: {round_dir}")
+106         
+107         # 返回存档目录的路径
+108         return round_dir
+109 
+110     def _get_next_round(self, issue_id: int) -> int:
+111         """
+112         获取下一个轮次号
+113 
+114         Args:
+115             issue_id: GitHub issue的ID
+116 
+117         Returns:
+118             int: 下一个轮次号
+119         """
+120         issue_path = os.path.join(self.issues_path, "#" + str(issue_id))
+121         if not os.path.exists(issue_path):
+122             return 1
+123 
+124         existing_rounds = [
+125             int(d[6:])
+126             for d in os.listdir(issue_path)
+127             if os.path.isdir(os.path.join(issue_path, d)) and (d[6:]).isdigit()
+128         ]
+129 
+130         return max(existing_rounds, default=0) + 1
+131 
+132     def _get_log_files(self) -> List[str]:
+133         """
+134         获取所有日志文件的路径
+135 
+136         Returns:
+137             List[str]: 日志文件路径列表
+138         """
+139         log_patterns = ["*.log", "*.txt"]
+140 
+141         log_files = []
+142         for pattern in log_patterns:
+143             log_files.extend(glob.glob(os.path.join(self.logs_path, pattern)))
+144 
+145         return log_files
+146         
+147     def get_issue_log_entries(self, issue_id: int) -> List[LogEntry]:
+148         """
+149         获取指定issue的所有轮次的日志条目
+150 
+151         Args:
+152             issue_id: GitHub issue的ID
+153 
+154         Returns:
+155             List[LogEntry]: 日志条目列表，按轮次排序
+156         """
+157         issue_dir = os.path.join(self.issues_path, f"#{issue_id}")
+158         if not os.path.exists(issue_dir):
+159             logger.warning(f"Issue #{issue_id}的日志目录不存在")
+160             return []
+161         
+162         log_entries = []
+163         
+164         # 遍历所有轮次目录
+165         for dir_name in os.listdir(issue_dir):
+166             if not dir_name.startswith("round_"):
+167                 continue
+168                 
+169             try:
+170                 round_num = int(dir_name[6:])  # 提取轮次号
+171                 round_dir = os.path.join(issue_dir, dir_name)
+172                 
+173                 # 读取系统提示词
+174                 sys_prompt_path = os.path.join(round_dir, self.SYS_PROMPT_FILE)
+175                 with open(sys_prompt_path, "r", encoding="utf-8") as f:
+176                     sys_prompt = f.read()
+177                 
+178                 # 读取用户提示词
+179                 user_prompt_path = os.path.join(round_dir, self.USER_PROMPT_FILE)
+180                 with open(user_prompt_path, "r", encoding="utf-8") as f:
+181                     prompt = f.read()
+182                 
+183                 # 读取AI响应
+184                 ai_response_path = os.path.join(round_dir, self.AI_RESPONSE_FILE)
+185                 with open(ai_response_path, "r", encoding="utf-8") as f:
+186                     response = f.read()
+187                     
+188                 # 读取时间戳
+189                 timestamp_path = os.path.join(round_dir, self.TIMESTAMP_FILE)
+190                 timestamp = datetime.datetime.now().isoformat()  # 默认当前时间
+191                 if os.path.exists(timestamp_path):
+192                     try:
+193                         with open(timestamp_path, "r", encoding="utf-8") as f:
+194                             timestamp = f.read().strip()
+195                     except Exception as e:
+196                         logger.error(f"读取时间戳失败: {str(e)}")
+197                 
+198                 # 创建并添加LogEntry对象
+199                 entry = LogEntry(issue_id=issue_id, round_num=round_num, 
+200                                  sys_prompt=sys_prompt, prompt=prompt, 
+201                                  response=response, timestamp=timestamp, log_path=round_dir)
+202                 log_entries.append(entry)
+203             except Exception as e:
+204                 logger.error(f"读取轮次 {dir_name} 的日志失败: {str(e)}")
+205         
+206         # 按轮次号排序
+207         return sorted(log_entries, key=lambda entry: entry.round_num)
+208     
+209     def get_issue_round_log_entry(self, issue_id: int, round_num: int) -> Optional[LogEntry]:
+210         """
+211         获取指定issue特定轮次的日志条目
+212 
+213         Args:
+214             issue_id: GitHub issue的ID
+215             round_num: 轮次号
+216 
+217         Returns:
+218             Optional[LogEntry]: 指定轮次的日志条目，如果不存在则返回None
+219         """
+220         round_dir = os.path.join(self.issues_path, f"#{issue_id}", f"round_{round_num}")
+221         
+222         if not os.path.exists(round_dir):
+223             logger.warning(f"Issue #{issue_id} 的轮次 {round_num} 不存在")
+224             return None
+225             
+226         try:
+227             # 直接使用现有方法获取所有轮次，然后过滤出指定轮次
+228             all_entries = self.get_issue_log_entries(issue_id)
+229             return next((entry for entry in all_entries if entry.round_num == round_num), None)
+230         except Exception as e:
+231             logger.error(f"获取 Issue #{issue_id} 轮次 {round_num} 的日志失败: {str(e)}")
+232             return None
+233 
+234 if __name__ == "__main__":
+235     config = LogConfig("..")
+236     log_manager = LogManager(config)
+237
+```
+
+
+
+
+```
+File: core/prompt_generator.py
+1 import os
+2 import re
+3 from dataclasses import dataclass
+4 from typing import List, Dict, Optional
+5 
+6 from dotenv import load_dotenv
+7 from jinja2 import Template
+8 
+9 from core.ai import AIConfig
+10 from core.file_memory import FileMemory
+11 from core.file_selector import FileSelector
+12 
+13 
+14 @dataclass
+15 class PromptData:
+16     """提示数据类，封装生成提示所需的数据"""
+17     project_dir: str
+18     files: List[str]
+19     file_desc: Dict[str, str]
+20     requirement: str
+21     steps: Optional[str] = None
+22 
+23 
+24 @dataclass
+25 class ExtractedInfo:
+26     """提取的信息类，封装从提示中提取的数据"""
+27     project_dir: str
+28     files: List[str]
+29     file_desc: Dict[str, str]
+30     requirement: str
+31     steps: Optional[str] = None
+32 
+33 
+34 class PromptGenerator:
+35     """
+36     生成结构化提示的工具类，用于根据文件描述、文件内容、历史执行信息和用户需求生成提示
+37     """
+38     
+39     # 提示模板
+40     PROMPT_TEMPLATE = """# 项目文件描述
+41 
+42 {% for file_path in data.files %}
+43 - {{ file_path }}: {{ data.file_desc.get(file_path, "无描述") }}
+44 {% endfor %}
+45 
+46 # 文件内容
+47 
+48 {% for file_path in data.files %}
+49 {% if file_exists(data.project_dir, file_path) %}
+50 ```
+51 File: {{ file_path }}
+52 {{ format_file_content(data.project_dir, file_path) }}
+53 ```
+54 
+55 {% endif %}
+56 {% endfor %}
+57 {% if data.steps %}
+58 # 历史执行信息
+59 
+60 {{ data.steps }}
+61 
+62 {% endif %}
+63 # 用户需求
+64 
+65 {{ data.requirement }}
+66 """
+67 
+68     @staticmethod
+69     def generatePrompt(data: PromptData) -> str:
+70         """
+71         根据提示数据生成结构化提示
+72         
+73         Args:
+74             data: 提示数据对象
+75             
+76         Returns:
+77             str: 生成的结构化提示
+78         """
+79         # 创建 Jinja2 模板
+80         template = Template(PromptGenerator.PROMPT_TEMPLATE)
+81         
+82         # 定义辅助函数
+83         def file_exists(project_dir, file_path):
+84             path = os.path.join(project_dir, file_path)
+85             return os.path.exists(path)
+86         
+87         def format_file_content(project_dir, file_path):
+88             try:
+89                 path = os.path.join(project_dir, file_path)
+90                 with open(path, "r", encoding="utf-8") as f:
+91                     content = f.read()
+92                 
+93                 # 添加行号
+94                 lines = content.split("\n")
+95                 numbered_content = ""
+96                 for i, line in enumerate(lines, 1):
+97                     numbered_content += f"{i} {line}\n"
+98                 
+99                 return numbered_content.rstrip()
+100             except Exception as e:
+101                 return f"无法读取文件内容: {str(e)}"
+102         
+103         # 渲染模板
+104         return template.render(
+105             data=data,
+106             file_exists=file_exists,
+107             format_file_content=format_file_content
+108         )
+109 
+110     @staticmethod
+111     def extractInfo(prompt: str) -> ExtractedInfo:
+112         """
+113         从提示中提取信息
+114         
+115         Args:
+116             prompt: 提示文本
+117             
+118         Returns:
+119             ExtractedInfo: 提取的信息对象
+120         """
+121         files = []
+122         file_desc = {}
+123         steps = ""
+124         requirement = ""
+125         
+126         # 提取文件描述
+127         desc_pattern = r"# 项目文件描述\n\n(.*?)(?=\n# )"
+128         desc_match = re.search(desc_pattern, prompt, re.DOTALL)
+129         if desc_match:
+130             desc_text = desc_match.group(1).strip()
+131             for line in desc_text.split("\n"):
+132                 if line.startswith("- "):
+133                     parts = line[2:].split(": ", 1)
+134                     if len(parts) == 2:
+135                         file_path, desc = parts
+136                         files.append(file_path)
+137                         file_desc[file_path] = desc
+138         
+139         # 提取历史执行信息
+140         steps_pattern = r"# 历史执行信息\n\n(.*?)(?=\n# )"
+141         steps_match = re.search(steps_pattern, prompt, re.DOTALL)
+142         if steps_match:
+143             steps = steps_match.group(1).strip()
+144         
+145         # 提取用户需求
+146         req_pattern = r"# 用户需求\n\n(.*)"
+147         req_match = re.search(req_pattern, prompt, re.DOTALL)
+148         if req_match:
+149             requirement = req_match.group(1).strip()
+150         
+151         return ExtractedInfo(files, file_desc, steps, requirement)
+152     
+153     @staticmethod
+154     def formatFileContent(file_path: str) -> str:
+155         """
+156         格式化文件内容，添加行号
+157         
+158         Args:
+159             file_path: 文件路径
+160             
+161         Returns:
+162             str: 格式化后的文件内容
+163         """
+164         try:
+165             with open(file_path, "r", encoding="utf-8") as f:
+166                 content = f.read()
+167             
+168             # 添加行号
+169             lines = content.split("\n")
+170             numbered_content = ""
+171             for i, line in enumerate(lines, 1):
+172                 numbered_content += f"{i} {line}\n"
+173             
+174             return numbered_content.rstrip()
+175         except Exception as e:
+176             return f"无法读取文件 {file_path}: {str(e)}"
+177 
+178 if __name__ == "__main__":
+179     load_dotenv()
+180     requirement = """
+181     """
+182     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+183     selector = FileSelector(project_dir, 2, ai_config=AIConfig(
+184         temperature=1,
+185         model_name="claude-3.7-sonnet"
+186     ))
+187 
+188     files = selector.select_files_for_requirement_with_log(requirement)
+189 
+190     descriptions = FileMemory.get_selected_file_descriptions("../.", files)
+191 
+192     data = PromptData(project_dir = "../.", files=files, file_desc=descriptions, requirement=requirement, steps=None)
+193 
+194     print(PromptGenerator.generatePrompt(data))
+195 
+196
+```
+
+
+
+
+```
+File: core/git_manager.py
+1 from dataclasses import dataclass
+2 from typing import Optional, List
+3 import git
+4 import os
+5 import logging
+6 import shutil
+7 from urllib.parse import urlparse, urlunparse
+8 
+9 logger = logging.getLogger(__name__)
+10 
+11 
+12 @dataclass
+13 class GitConfig:
+14     """Git configuration parameters"""
+15 
+16     repo_path: str
+17     remote_name: str = "origin"
+18     default_branch: str = "main"
+19     remote_url: Optional[str] = None
+20     auth_token: Optional[str] = None
+21 
+22 
+23 class GitManager:
+24     """Manages git operations including push, pull, branch creation and switching"""
+25 
+26     def __init__(self, config: GitConfig):
+27         """Initialize GitManager with configuration"""
+28         self.config = config
+29         self.repo = None
+30         self._ensure_repo()
+31 
+32     def _ensure_repo(self) -> None:
+33         """Ensure git repository exists and is properly initialized"""
+34         if not os.path.exists(self.config.repo_path):
+35             if self.config.remote_url:
+36                 self.clone()
+37             else:
+38                 raise ValueError(
+39                     f"Repository path does not exist: {self.config.repo_path}"
+40                 )
+41         else:
+42             try:
+43                 self.repo = git.Repo(self.config.repo_path)
+44                 # Set auth token for remote operations if provided
+45                 if self.config.auth_token and self.config.remote_url:
+46                     self._set_remote_with_auth()
+47             except git.InvalidGitRepositoryError:
+48                 if self.config.remote_url:
+49                     self.clone()
+50                 else:
+51                     raise ValueError(
+52                         f"Invalid git repository at: {self.config.repo_path}"
+53                     )
+54 
+55     def _get_url_with_token(self, url: str) -> str:
+56         """
+57         Insert authentication token into git URL
+58 
+59         Args:
+60             url: Original git URL
+61 
+62         Returns:
+63             URL with authentication token
+64         """
+65         if not self.config.auth_token:
+66             return url
+67 
+68         parsed = urlparse(url)
+69 
+70         # Handle different URL formats
+71         if parsed.scheme in ["http", "https"]:
+72             netloc = f"{self.config.auth_token}@{parsed.netloc}"
+73             return urlunparse(
+74                 (
+75                     parsed.scheme,
+76                     netloc,
+77                     parsed.path,
+78                     parsed.params,
+79                     parsed.query,
+80                     parsed.fragment,
+81                 )
+82             )
+83         elif "@" in url and ":" in url and url.startswith("git@"):
+84             # Handle SSH format: git@github.com:username/repo.git
+85             return url  # Don't modify SSH URLs
+86         else:
+87             return url  # Return original if format is not recognized
+88 
+89     def _set_remote_with_auth(self) -> None:
+90         """Configure remote with authentication token"""
+91         if not self.repo or not self.config.auth_token or not self.config.remote_url:
+92             return
+93 
+94         try:
+95             # Get current remotes
+96             remotes = list(self.repo.remotes)
+97             remote_exists = any(
+98                 remote.name == self.config.remote_name for remote in remotes
+99             )
+100 
+101             # Prepare URL with token
+102             url_with_token = self._get_url_with_token(self.config.remote_url)
+103 
+104             # Set or update remote
+105             if remote_exists:
+106                 self.repo.git.remote("set-url", self.config.remote_name, url_with_token)
+107             else:
+108                 self.repo.git.remote("add", self.config.remote_name, url_with_token)
+109 
+110             logger.info(
+111                 f"Configured remote '{self.config.remote_name}' with authentication"
+112             )
+113         except git.GitCommandError as e:
+114             logger.error(f"Failed to configure remote with authentication: {str(e)}")
+115             raise
+116 
+117     def clone(self) -> None:
+118         """
+119         Clone the repository specified in config
+120 
+121         Raises:
+122             ValueError: If remote_url is not set in config
+123             git.GitCommandError: If clone operation fails
+124         """
+125         if not self.config.remote_url:
+126             raise ValueError("Remote URL must be set to clone a repository")
+127 
+128         self._clone_repo()
+129 
+130     def _clone_repo(self, branch: Optional[str] = None) -> None:
+131         """
+132         Internal method to perform the clone operation
+133 
+134         Args:
+135             branch: Branch to checkout after cloning
+136         """
+137         try:
+138             # Prepare parent directory if it doesn't exist
+139             parent_dir = os.path.dirname(self.config.repo_path)
+140             if parent_dir and not os.path.exists(parent_dir):
+141                 os.makedirs(parent_dir)
+142 
+143             # Remove target directory if it exists
+144             if os.path.exists(self.config.repo_path):
+145                 shutil.rmtree(self.config.repo_path)
+146 
+147             # Prepare URL with token if provided
+148             clone_url = self._get_url_with_token(self.config.remote_url)
+149 
+150             # Clone options
+151             clone_args = {
+152                 "url": clone_url,
+153                 "to_path": self.config.repo_path,
+154             }
+155 
+156             # Add branch if specified
+157             if branch:
+158                 clone_args["branch"] = branch
+159 
+160             # Clone the repository
+161             self.repo = git.Repo.clone_from(**clone_args)
+162 
+163             logger.info(f"Successfully cloned repository to {self.config.repo_path}")
+164 
+165             # Configure remote with auth token if provided
+166             if self.config.auth_token:
+167                 self._set_remote_with_auth()
+168 
+169         except git.GitCommandError as e:
+170             logger.error(f"Failed to clone repository: {str(e)}")
+171             # Clean up if clone failed
+172             if os.path.exists(self.config.repo_path):
+173                 shutil.rmtree(self.config.repo_path)
+174             raise
+175 
+176     def pull(self, branch: Optional[str] = None) -> None:
+177         """
+178         Pull changes from remote repository
+179 
+180         Args:
+181             branch: Branch to pull from. If None, pulls current branch
+182         """
+183         try:
+184             if branch:
+185                 self.repo.git.pull(self.config.remote_name, branch)
+186             else:
+187                 self.repo.git.pull()
+188             logger.info(
+189                 f"Successfully pulled changes from {branch or 'current branch'}"
+190             )
+191         except git.GitCommandError as e:
+192             logger.error(f"Failed to pull changes: {str(e)}")
+193             raise
+194 
+195     def push(
+196         self,
+197         branch: Optional[str] = None,
+198         force: bool = False,
+199         set_upstream: bool = True,
+200     ) -> None:
+201         """
+202         Push changes to remote repository
+203 
+204         Args:
+205             branch: Branch to push. If None, pushes current branch
+206             force: Whether to force push
+207             set_upstream: Whether to set upstream branch if it doesn't exist
+208         """
+209         try:
+210             # 确保远程 URL 包含认证令牌
+211             if self.config.auth_token:
+212                 self._set_remote_with_auth()
+213 
+214             # 如果没有指定分支，获取当前分支
+215             current_branch = branch or self.get_current_branch()
+216 
+217             # 执行推送操作
+218             if force:
+219                 if set_upstream:
+220                     self.repo.git.push(
+221                         "-f", "--set-upstream", self.config.remote_name, current_branch
+222                     )
+223                 else:
+224                     if branch:
+225                         self.repo.git.push("-f", self.config.remote_name, branch)
+226                     else:
+227                         self.repo.git.push("-f")
+228             else:
+229                 if set_upstream:
+230                     self.repo.git.push(
+231                         "--set-upstream", self.config.remote_name, current_branch
+232                     )
+233                 else:
+234                     if branch:
+235                         self.repo.git.push(self.config.remote_name, branch)
+236                     else:
+237                         self.repo.git.push()
+238 
+239             logger.info(f"Successfully pushed changes to {current_branch}")
+240         except git.GitCommandError as e:
+241             logger.error(f"Failed to push changes: {str(e)}")
+242             raise
+243 
+244     def create_branch(
+245         self, branch_name: str, start_point: Optional[str] = None
+246     ) -> None:
+247         """
+248         Create a new branch
+249 
+250         Args:
+251             branch_name: Name of the new branch
+252             start_point: Branch/commit to create branch from. If None, uses current HEAD
+253         """
+254         try:
+255             if start_point:
+256                 self.repo.git.branch(branch_name, start_point)
+257             else:
+258                 self.repo.git.branch(branch_name)
+259             logger.info(f"Successfully created branch: {branch_name}")
+260         except git.GitCommandError as e:
+261             logger.error(f"Failed to create branch: {str(e)}")
+262             raise
+263 
+264     def switch_branch(self, branch_name: str, create: bool = False) -> None:
+265         """
+266         Switch to specified branch
+267 
+268         Args:
+269             branch_name: Name of the branch to switch to
+270             create: Create branch if it doesn't exist
+271         """
+272         try:
+273             if create:
+274                 self.repo.git.checkout("-b", branch_name)
+275             else:
+276                 self.repo.git.checkout(branch_name)
+277             logger.info(f"Successfully switched to branch: {branch_name}")
+278         except git.GitCommandError as e:
+279             logger.error(f"Failed to switch branch: {str(e)}")
+280             raise
+281 
+282     def delete_branch(self, branch_name: str, force: bool = False) -> None:
+283         """
+284         Delete specified branch
+285 
+286         Args:
+287             branch_name: Name of the branch to delete
+288             force: Force delete even if branch not fully merged
+289         """
+290         try:
+291             if force:
+292                 self.repo.git.branch("-D", branch_name)
+293             else:
+294                 self.repo.git.branch("-d", branch_name)
+295             logger.info(f"Successfully deleted branch: {branch_name}")
+296         except git.GitCommandError as e:
+297             logger.error(f"Failed to delete branch: {str(e)}")
+298             raise
+299 
+300     def get_current_branch(self) -> str:
+301         """Get name of current branch"""
+302         return self.repo.active_branch.name
+303 
+304     def list_branches(self, remote: bool = False) -> List[str]:
+305         """
+306         List all branches
+307 
+308         Args:
+309             remote: Whether to list remote branches instead of local
+310 
+311         Returns:
+312             List of branch names
+313         """
+314         if remote:
+315             return [ref.name for ref in self.repo.remote().refs]
+316         return [branch.name for branch in self.repo.heads]
+317 
+318     def get_current_commit_id(self) -> str:
+319         """获取当前提交的 ID"""
+320         try:
+321             return self.repo.head.commit.hexsha
+322         except Exception as e:
+323             logger.error(f"获取当前提交 ID 失败: {str(e)}")
+324             return ""
+325 
+326     def get_changed_files(self, old_commit: str, new_commit: str) -> List[str]:
+327         """
+328         获取两个提交之间变更的文件列表
+329 
+330         Args:
+331             old_commit: 旧提交的 ID
+332             new_commit: 新提交的 ID
+333 
+334         Returns:
+335             变更的文件路径列表
+336         """
+337         try:
+338             # 获取提交对象
+339             old = self.repo.commit(old_commit)
+340             new = self.repo.commit(new_commit)
+341 
+342             # 获取差异
+343             diff_index = old.diff(new)
+344 
+345             # 收集所有变更的文件
+346             changed_files = set()
+347 
+348             # 添加修改的文件
+349             for diff in diff_index.iter_change_type("M"):
+350                 if not self.is_ignore(diff.a_path):
+351                     changed_files.add(diff.a_path)
+352 
+353             # 添加增加的文件
+354             for diff in diff_index.iter_change_type("A"):
+355                 if not self.is_ignore(diff.b_path):
+356                     changed_files.add(diff.b_path)
+357 
+358             # 添加删除的文件
+359             for diff in diff_index.iter_change_type("D"):
+360                 if not self.is_ignore(diff.b_path):
+361                     changed_files.add(diff.a_path)
+362 
+363             return list(changed_files)
+364         except Exception as e:
+365             logger.error(f"获取变更文件列表失败: {str(e)}")
+366             return []
+367 
+368     def is_ignore(self, path: str) -> bool:
+369         # 检查文件名是否以点开头
+370         file_name = os.path.basename(path)
+371         if file_name.startswith("."):
+372             return True
+373         # 检查路径中是否包含以点开头的目录
+374         path_parts = path.split(os.path.sep)
+375         for part in path_parts:
+376             # 跳过空字符串（可能出现在路径开头）
+377             if not part:
+378                 continue
+379             # 如果目录名以点开头，则忽略
+380             if part.startswith("."):
+381                 return True
+382 
+383         # 如果不满足任何忽略条件，则不忽略
+384         return False
+385 
+386     def delete_local_repository(self, remove_git_config: bool = False) -> None:
+387         """
+388         删除本地代码仓库和可选的全局 git 配置
+389 
+390         Args:
+391             remove_git_config: 是否同时删除与此仓库相关的全局 git 配置
+392 
+393         Raises:
+394             ValueError: 如果仓库路径不存在
+395             OSError: 如果删除操作失败
+396         """
+397         if not os.path.exists(self.config.repo_path):
+398             logger.warning(f"仓库路径不存在，无需删除: {self.config.repo_path}")
+399             return
+400 
+401         try:
+402             # 关闭仓库连接以释放文件锁
+403             if self.repo:
+404                 self.repo.close()
+405                 self.repo = None
+406 
+407             # 删除本地仓库目录
+408             shutil.rmtree(self.config.repo_path)
+409             logger.info(f"成功删除本地仓库: {self.config.repo_path}")
+410 
+411             # 可选：删除全局 git 配置中与此仓库相关的条目
+412             if remove_git_config:
+413                 self._remove_git_config()
+414 
+415         except (OSError, shutil.Error) as e:
+416             logger.error(f"删除本地仓库失败: {str(e)}")
+417             raise
+418 
+419     def _remove_git_config(self) -> None:
+420         """
+421         从全局 git 配置中删除与当前仓库相关的配置
+422 
+423         这包括：
+424         - 与远程仓库 URL 相关的凭证
+425         - 特定于此仓库的用户配置
+426         """
+427         try:
+428             # 获取仓库的规范路径
+429             repo_path = os.path.abspath(self.config.repo_path)
+430             repo_name = os.path.basename(repo_path)
+431 
+432             # 尝试从 git 配置中删除与此仓库相关的条目
+433             if self.config.remote_url:
+434                 # 解析远程 URL 以获取主机名
+435                 parsed = urlparse(self.config.remote_url)
+436                 if parsed.netloc:
+437                     # 尝试删除凭证
+438                     try:
+439                         git.cmd.Git().execute(
+440                             ["git", "credential", "reject"],
+441                             input=f"url={self.config.remote_url}\n\n",
+442                         )
+443                         logger.info(f"已尝试从凭证存储中删除 {parsed.netloc} 的凭证")
+444                     except git.GitCommandError:
+445                         logger.debug("凭证删除操作未成功，可能没有存储凭证")
+446 
+447             # 尝试删除仓库特定的配置（如果有）
+448             try:
+449                 git.cmd.Git().execute(
+450                     [
+451                         "git",
+452                         "config",
+453                         "--global",
+454                         "--remove-section",
+455                         f"remote.{repo_name}",
+456                     ]
+457                 )
+458                 logger.info(f"已删除全局 git 配置中的 remote.{repo_name} 部分")
+459             except git.GitCommandError:
+460                 logger.debug(f"全局配置中没有 remote.{repo_name} 部分")
+461 
+462             logger.info("已完成 git 配置清理")
+463 
+464         except Exception as e:
+465             logger.warning(f"清理 git 配置时出错: {str(e)}")
+466             # 不抛出异常，因为这是次要操作
+467 
+468     def add_issue_comment(self, issue_number: int, comment_text: str) -> bool:
+469         """
+470         在 GitHub 仓库的指定 Issue 下添加评论
+471 
+472         Args:
+473             issue_number: Issue 编号
+474             comment_text: 评论内容
+475 
+476         Returns:
+477             bool: 操作是否成功
+478 
+479         Raises:
+480             ValueError: 如果未配置认证令牌或远程 URL
+481             Exception: 如果添加评论过程中发生其他错误
+482         """
+483         try:
+484             # 检查必要的配置
+485             if not self.config.auth_token:
+486                 raise ValueError("添加 Issue 评论需要认证令牌 (auth_token)")
+487 
+488             if not self.config.remote_url:
+489                 raise ValueError("添加 Issue 评论需要远程仓库 URL (remote_url)")
+490 
+491             # 导入 PyGithub
+492             try:
+493                 from github import Github
+494             except ImportError:
+495                 raise ImportError("添加 Issue 评论需要安装 PyGithub 库: pip install PyGithub")
+496 
+497             # 解析仓库所有者和名称
+498             parsed_url = urlparse(self.config.remote_url)
+499             path_parts = parsed_url.path.strip("/").split("/")
+500 
+501             if len(path_parts) < 2 or not all(path_parts[:2]):
+502                 raise ValueError(f"无法从 URL 解析仓库所有者和名称: {self.config.remote_url}")
+503 
+504             owner = path_parts[0]
+505             repo_name = path_parts[1]
+506             if repo_name.endswith(".git"):
+507                 repo_name = repo_name[:-4]  # 移除 .git 后缀
+508 
+509             # 初始化 GitHub 客户端
+510             g = Github(self.config.auth_token)
+511 
+512             # 获取仓库和 Issue
+513             repo = g.get_repo(f"{owner}/{repo_name}")
+514             issue = repo.get_issue(issue_number)
+515 
+516             # 添加评论
+517             comment = issue.create_comment(comment_text)
+518 
+519             logger.info(f"成功在 Issue #{issue_number} 下添加评论 (ID: {comment.id})")
+520             return True
+521 
+522         except Exception as e:
+523             logger.error(f"添加 Issue 评论失败: {str(e)}")
+524             raise
+525 
+526     def commit(
+527         self, message: str, add_all: bool = True, files: Optional[List[str]] = None
+528     ) -> str:
+529         """
+530         创建一个新的提交
+531 
+532         Args:
+533             message: 提交信息
+534             add_all: 是否添加所有变更的文件，默认为 True
+535             files: 要添加的特定文件列表，如果 add_all 为 True 则忽略此参数
+536 
+537         Returns:
+538             str: 新提交的 SHA 哈希值
+539 
+540         Raises:
+541             git.GitCommandError: 如果 Git 操作失败
+542         """
+543         try:
+544             # 添加文件到暂存区
+545             if add_all:
+546                 self.repo.git.add(A=True)
+547             elif files:
+548                 for file in files:
+549                     self.repo.git.add(file)
+550 
+551             # 创建提交
+552             commit = self.repo.index.commit(message)
+553             logger.info(f"成功创建提交: {commit.hexsha[:7]} - {message}")
+554 
+555             return commit.hexsha
+556         except git.GitCommandError as e:
+557             logger.error(f"创建提交失败: {str(e)}")
+558             raise
+559
+```
+
+
+
+
+```
+File: core/git_manager.py
+1 from dataclasses import dataclass
+2 from typing import Optional, List
+3 import git
+4 import os
+5 import logging
+6 import shutil
+7 from urllib.parse import urlparse, urlunparse
+8 
+9 logger = logging.getLogger(__name__)
+10 
+11 
+12 @dataclass
+13 class GitConfig:
+14     """Git configuration parameters"""
+15 
+16     repo_path: str
+17     remote_name: str = "origin"
+18     default_branch: str = "main"
+19     remote_url: Optional[str] = None
+20     auth_token: Optional[str] = None
+21 
+22 
+23 class GitManager:
+24     """Manages git operations including push, pull, branch creation and switching"""
+25 
+26     def __init__(self, config: GitConfig):
+27         """Initialize GitManager with configuration"""
+28         self.config = config
+29         self.repo = None
+30         self._ensure_repo()
+31 
+32     def _ensure_repo(self) -> None:
+33         """Ensure git repository exists and is properly initialized"""
+34         if not os.path.exists(self.config.repo_path):
+35             if self.config.remote_url:
+36                 self.clone()
+37             else:
+38                 raise ValueError(
+39                     f"Repository path does not exist: {self.config.repo_path}"
+40                 )
+41         else:
+42             try:
+43                 self.repo = git.Repo(self.config.repo_path)
+44                 # Set auth token for remote operations if provided
+45                 if self.config.auth_token and self.config.remote_url:
+46                     self._set_remote_with_auth()
+47             except git.InvalidGitRepositoryError:
+48                 if self.config.remote_url:
+49                     self.clone()
+50                 else:
+51                     raise ValueError(
+52                         f"Invalid git repository at: {self.config.repo_path}"
+53                     )
+54 
+55     def _get_url_with_token(self, url: str) -> str:
+56         """
+57         Insert authentication token into git URL
+58 
+59         Args:
+60             url: Original git URL
+61 
+62         Returns:
+63             URL with authentication token
+64         """
+65         if not self.config.auth_token:
+66             return url
+67 
+68         parsed = urlparse(url)
+69 
+70         # Handle different URL formats
+71         if parsed.scheme in ["http", "https"]:
+72             netloc = f"{self.config.auth_token}@{parsed.netloc}"
+73             return urlunparse(
+74                 (
+75                     parsed.scheme,
+76                     netloc,
+77                     parsed.path,
+78                     parsed.params,
+79                     parsed.query,
+80                     parsed.fragment,
+81                 )
+82             )
+83         elif "@" in url and ":" in url and url.startswith("git@"):
+84             # Handle SSH format: git@github.com:username/repo.git
+85             return url  # Don't modify SSH URLs
+86         else:
+87             return url  # Return original if format is not recognized
+88 
+89     def _set_remote_with_auth(self) -> None:
+90         """Configure remote with authentication token"""
+91         if not self.repo or not self.config.auth_token or not self.config.remote_url:
+92             return
+93 
+94         try:
+95             # Get current remotes
+96             remotes = list(self.repo.remotes)
+97             remote_exists = any(
+98                 remote.name == self.config.remote_name for remote in remotes
+99             )
+100 
+101             # Prepare URL with token
+102             url_with_token = self._get_url_with_token(self.config.remote_url)
+103 
+104             # Set or update remote
+105             if remote_exists:
+106                 self.repo.git.remote("set-url", self.config.remote_name, url_with_token)
+107             else:
+108                 self.repo.git.remote("add", self.config.remote_name, url_with_token)
+109 
+110             logger.info(
+111                 f"Configured remote '{self.config.remote_name}' with authentication"
+112             )
+113         except git.GitCommandError as e:
+114             logger.error(f"Failed to configure remote with authentication: {str(e)}")
+115             raise
+116 
+117     def clone(self) -> None:
+118         """
+119         Clone the repository specified in config
+120 
+121         Raises:
+122             ValueError: If remote_url is not set in config
+123             git.GitCommandError: If clone operation fails
+124         """
+125         if not self.config.remote_url:
+126             raise ValueError("Remote URL must be set to clone a repository")
+127 
+128         self._clone_repo()
+129 
+130     def _clone_repo(self, branch: Optional[str] = None) -> None:
+131         """
+132         Internal method to perform the clone operation
+133 
+134         Args:
+135             branch: Branch to checkout after cloning
+136         """
+137         try:
+138             # Prepare parent directory if it doesn't exist
+139             parent_dir = os.path.dirname(self.config.repo_path)
+140             if parent_dir and not os.path.exists(parent_dir):
+141                 os.makedirs(parent_dir)
+142 
+143             # Remove target directory if it exists
+144             if os.path.exists(self.config.repo_path):
+145                 shutil.rmtree(self.config.repo_path)
+146 
+147             # Prepare URL with token if provided
+148             clone_url = self._get_url_with_token(self.config.remote_url)
+149 
+150             # Clone options
+151             clone_args = {
+152                 "url": clone_url,
+153                 "to_path": self.config.repo_path,
+154             }
+155 
+156             # Add branch if specified
+157             if branch:
+158                 clone_args["branch"] = branch
+159 
+160             # Clone the repository
+161             self.repo = git.Repo.clone_from(**clone_args)
+162 
+163             logger.info(f"Successfully cloned repository to {self.config.repo_path}")
+164 
+165             # Configure remote with auth token if provided
+166             if self.config.auth_token:
+167                 self._set_remote_with_auth()
+168 
+169         except git.GitCommandError as e:
+170             logger.error(f"Failed to clone repository: {str(e)}")
+171             # Clean up if clone failed
+172             if os.path.exists(self.config.repo_path):
+173                 shutil.rmtree(self.config.repo_path)
+174             raise
+175 
+176     def pull(self, branch: Optional[str] = None) -> None:
+177         """
+178         Pull changes from remote repository
+179 
+180         Args:
+181             branch: Branch to pull from. If None, pulls current branch
+182         """
+183         try:
+184             if branch:
+185                 self.repo.git.pull(self.config.remote_name, branch)
+186             else:
+187                 self.repo.git.pull()
+188             logger.info(
+189                 f"Successfully pulled changes from {branch or 'current branch'}"
+190             )
+191         except git.GitCommandError as e:
+192             logger.error(f"Failed to pull changes: {str(e)}")
+193             raise
+194 
+195     def push(
+196         self,
+197         branch: Optional[str] = None,
+198         force: bool = False,
+199         set_upstream: bool = True,
+200     ) -> None:
+201         """
+202         Push changes to remote repository
+203 
+204         Args:
+205             branch: Branch to push. If None, pushes current branch
+206             force: Whether to force push
+207             set_upstream: Whether to set upstream branch if it doesn't exist
+208         """
+209         try:
+210             # 确保远程 URL 包含认证令牌
+211             if self.config.auth_token:
+212                 self._set_remote_with_auth()
+213 
+214             # 如果没有指定分支，获取当前分支
+215             current_branch = branch or self.get_current_branch()
+216 
+217             # 执行推送操作
+218             if force:
+219                 if set_upstream:
+220                     self.repo.git.push(
+221                         "-f", "--set-upstream", self.config.remote_name, current_branch
+222                     )
+223                 else:
+224                     if branch:
+225                         self.repo.git.push("-f", self.config.remote_name, branch)
+226                     else:
+227                         self.repo.git.push("-f")
+228             else:
+229                 if set_upstream:
+230                     self.repo.git.push(
+231                         "--set-upstream", self.config.remote_name, current_branch
+232                     )
+233                 else:
+234                     if branch:
+235                         self.repo.git.push(self.config.remote_name, branch)
+236                     else:
+237                         self.repo.git.push()
+238 
+239             logger.info(f"Successfully pushed changes to {current_branch}")
+240         except git.GitCommandError as e:
+241             logger.error(f"Failed to push changes: {str(e)}")
+242             raise
+243 
+244     def create_branch(
+245         self, branch_name: str, start_point: Optional[str] = None
+246     ) -> None:
+247         """
+248         Create a new branch
+249 
+250         Args:
+251             branch_name: Name of the new branch
+252             start_point: Branch/commit to create branch from. If None, uses current HEAD
+253         """
+254         try:
+255             if start_point:
+256                 self.repo.git.branch(branch_name, start_point)
+257             else:
+258                 self.repo.git.branch(branch_name)
+259             logger.info(f"Successfully created branch: {branch_name}")
+260         except git.GitCommandError as e:
+261             logger.error(f"Failed to create branch: {str(e)}")
+262             raise
+263 
+264     def switch_branch(self, branch_name: str, create: bool = False) -> None:
+265         """
+266         Switch to specified branch
+267 
+268         Args:
+269             branch_name: Name of the branch to switch to
+270             create: Create branch if it doesn't exist
+271         """
+272         try:
+273             if create:
+274                 self.repo.git.checkout("-b", branch_name)
+275             else:
+276                 self.repo.git.checkout(branch_name)
+277             logger.info(f"Successfully switched to branch: {branch_name}")
+278         except git.GitCommandError as e:
+279             logger.error(f"Failed to switch branch: {str(e)}")
+280             raise
+281 
+282     def delete_branch(self, branch_name: str, force: bool = False) -> None:
+283         """
+284         Delete specified branch
+285 
+286         Args:
+287             branch_name: Name of the branch to delete
+288             force: Force delete even if branch not fully merged
+289         """
+290         try:
+291             if force:
+292                 self.repo.git.branch("-D", branch_name)
+293             else:
+294                 self.repo.git.branch("-d", branch_name)
+295             logger.info(f"Successfully deleted branch: {branch_name}")
+296         except git.GitCommandError as e:
+297             logger.error(f"Failed to delete branch: {str(e)}")
+298             raise
+299 
+300     def get_current_branch(self) -> str:
+301         """Get name of current branch"""
+302         return self.repo.active_branch.name
+303 
+304     def list_branches(self, remote: bool = False) -> List[str]:
+305         """
+306         List all branches
+307 
+308         Args:
+309             remote: Whether to list remote branches instead of local
+310 
+311         Returns:
+312             List of branch names
+313         """
+314         if remote:
+315             return [ref.name for ref in self.repo.remote().refs]
+316         return [branch.name for branch in self.repo.heads]
+317 
+318     def get_current_commit_id(self) -> str:
+319         """获取当前提交的 ID"""
+320         try:
+321             return self.repo.head.commit.hexsha
+322         except Exception as e:
+323             logger.error(f"获取当前提交 ID 失败: {str(e)}")
+324             return ""
+325 
+326     def get_changed_files(self, old_commit: str, new_commit: str) -> List[str]:
+327         """
+328         获取两个提交之间变更的文件列表
+329 
+330         Args:
+331             old_commit: 旧提交的 ID
+332             new_commit: 新提交的 ID
+333 
+334         Returns:
+335             变更的文件路径列表
+336         """
+337         try:
+338             # 获取提交对象
+339             old = self.repo.commit(old_commit)
+340             new = self.repo.commit(new_commit)
+341 
+342             # 获取差异
+343             diff_index = old.diff(new)
+344 
+345             # 收集所有变更的文件
+346             changed_files = set()
+347 
+348             # 添加修改的文件
+349             for diff in diff_index.iter_change_type("M"):
+350                 if not self.is_ignore(diff.a_path):
+351                     changed_files.add(diff.a_path)
+352 
+353             # 添加增加的文件
+354             for diff in diff_index.iter_change_type("A"):
+355                 if not self.is_ignore(diff.b_path):
+356                     changed_files.add(diff.b_path)
+357 
+358             # 添加删除的文件
+359             for diff in diff_index.iter_change_type("D"):
+360                 if not self.is_ignore(diff.b_path):
+361                     changed_files.add(diff.a_path)
+362 
+363             return list(changed_files)
+364         except Exception as e:
+365             logger.error(f"获取变更文件列表失败: {str(e)}")
+366             return []
+367 
+368     def is_ignore(self, path: str) -> bool:
+369         # 检查文件名是否以点开头
+370         file_name = os.path.basename(path)
+371         if file_name.startswith("."):
+372             return True
+373         # 检查路径中是否包含以点开头的目录
+374         path_parts = path.split(os.path.sep)
+375         for part in path_parts:
+376             # 跳过空字符串（可能出现在路径开头）
+377             if not part:
+378                 continue
+379             # 如果目录名以点开头，则忽略
+380             if part.startswith("."):
+381                 return True
+382 
+383         # 如果不满足任何忽略条件，则不忽略
+384         return False
+385 
+386     def delete_local_repository(self, remove_git_config: bool = False) -> None:
+387         """
+388         删除本地代码仓库和可选的全局 git 配置
+389 
+390         Args:
+391             remove_git_config: 是否同时删除与此仓库相关的全局 git 配置
+392 
+393         Raises:
+394             ValueError: 如果仓库路径不存在
+395             OSError: 如果删除操作失败
+396         """
+397         if not os.path.exists(self.config.repo_path):
+398             logger.warning(f"仓库路径不存在，无需删除: {self.config.repo_path}")
+399             return
+400 
+401         try:
+402             # 关闭仓库连接以释放文件锁
+403             if self.repo:
+404                 self.repo.close()
+405                 self.repo = None
+406 
+407             # 删除本地仓库目录
+408             shutil.rmtree(self.config.repo_path)
+409             logger.info(f"成功删除本地仓库: {self.config.repo_path}")
+410 
+411             # 可选：删除全局 git 配置中与此仓库相关的条目
+412             if remove_git_config:
+413                 self._remove_git_config()
+414 
+415         except (OSError, shutil.Error) as e:
+416             logger.error(f"删除本地仓库失败: {str(e)}")
+417             raise
+418 
+419     def _remove_git_config(self) -> None:
+420         """
+421         从全局 git 配置中删除与当前仓库相关的配置
+422 
+423         这包括：
+424         - 与远程仓库 URL 相关的凭证
+425         - 特定于此仓库的用户配置
+426         """
+427         try:
+428             # 获取仓库的规范路径
+429             repo_path = os.path.abspath(self.config.repo_path)
+430             repo_name = os.path.basename(repo_path)
+431 
+432             # 尝试从 git 配置中删除与此仓库相关的条目
+433             if self.config.remote_url:
+434                 # 解析远程 URL 以获取主机名
+435                 parsed = urlparse(self.config.remote_url)
+436                 if parsed.netloc:
+437                     # 尝试删除凭证
+438                     try:
+439                         git.cmd.Git().execute(
+440                             ["git", "credential", "reject"],
+441                             input=f"url={self.config.remote_url}\n\n",
+442                         )
+443                         logger.info(f"已尝试从凭证存储中删除 {parsed.netloc} 的凭证")
+444                     except git.GitCommandError:
+445                         logger.debug("凭证删除操作未成功，可能没有存储凭证")
+446 
+447             # 尝试删除仓库特定的配置（如果有）
+448             try:
+449                 git.cmd.Git().execute(
+450                     [
+451                         "git",
+452                         "config",
+453                         "--global",
+454                         "--remove-section",
+455                         f"remote.{repo_name}",
+456                     ]
+457                 )
+458                 logger.info(f"已删除全局 git 配置中的 remote.{repo_name} 部分")
+459             except git.GitCommandError:
+460                 logger.debug(f"全局配置中没有 remote.{repo_name} 部分")
+461 
+462             logger.info("已完成 git 配置清理")
+463 
+464         except Exception as e:
+465             logger.warning(f"清理 git 配置时出错: {str(e)}")
+466             # 不抛出异常，因为这是次要操作
+467 
+468     def add_issue_comment(self, issue_number: int, comment_text: str) -> bool:
+469         """
+470         在 GitHub 仓库的指定 Issue 下添加评论
+471 
+472         Args:
+473             issue_number: Issue 编号
+474             comment_text: 评论内容
+475 
+476         Returns:
+477             bool: 操作是否成功
+478 
+479         Raises:
+480             ValueError: 如果未配置认证令牌或远程 URL
+481             Exception: 如果添加评论过程中发生其他错误
+482         """
+483         try:
+484             # 检查必要的配置
+485             if not self.config.auth_token:
+486                 raise ValueError("添加 Issue 评论需要认证令牌 (auth_token)")
+487 
+488             if not self.config.remote_url:
+489                 raise ValueError("添加 Issue 评论需要远程仓库 URL (remote_url)")
+490 
+491             # 导入 PyGithub
+492             try:
+493                 from github import Github
+494             except ImportError:
+495                 raise ImportError("添加 Issue 评论需要安装 PyGithub 库: pip install PyGithub")
+496 
+497             # 解析仓库所有者和名称
+498             parsed_url = urlparse(self.config.remote_url)
+499             path_parts = parsed_url.path.strip("/").split("/")
+500 
+501             if len(path_parts) < 2 or not all(path_parts[:2]):
+502                 raise ValueError(f"无法从 URL 解析仓库所有者和名称: {self.config.remote_url}")
+503 
+504             owner = path_parts[0]
+505             repo_name = path_parts[1]
+506             if repo_name.endswith(".git"):
+507                 repo_name = repo_name[:-4]  # 移除 .git 后缀
+508 
+509             # 初始化 GitHub 客户端
+510             g = Github(self.config.auth_token)
+511 
+512             # 获取仓库和 Issue
+513             repo = g.get_repo(f"{owner}/{repo_name}")
+514             issue = repo.get_issue(issue_number)
+515 
+516             # 添加评论
+517             comment = issue.create_comment(comment_text)
+518 
+519             logger.info(f"成功在 Issue #{issue_number} 下添加评论 (ID: {comment.id})")
+520             return True
+521 
+522         except Exception as e:
+523             logger.error(f"添加 Issue 评论失败: {str(e)}")
+524             raise
+525 
+526     def commit(
+527         self, message: str, add_all: bool = True, files: Optional[List[str]] = None
+528     ) -> str:
+529         """
+530         创建一个新的提交
+531 
+532         Args:
+533             message: 提交信息
+534             add_all: 是否添加所有变更的文件，默认为 True
+535             files: 要添加的特定文件列表，如果 add_all 为 True 则忽略此参数
+536 
+537         Returns:
+538             str: 新提交的 SHA 哈希值
+539 
+540         Raises:
+541             git.GitCommandError: 如果 Git 操作失败
+542         """
+543         try:
+544             # 添加文件到暂存区
+545             if add_all:
+546                 self.repo.git.add(A=True)
+547             elif files:
+548                 for file in files:
+549                     self.repo.git.add(file)
+550 
+551             # 创建提交
+552             commit = self.repo.index.commit(message)
+553             logger.info(f"成功创建提交: {commit.hexsha[:7]} - {message}")
+554 
+555             return commit.hexsha
+556         except git.GitCommandError as e:
+557             logger.error(f"创建提交失败: {str(e)}")
+558             raise
+559
+```
+
+
+
+
+```
+File: core/ai.py
+1 import logging
+2 from dataclasses import dataclass
+3 from typing import Any, List, Optional
+4 
+5 from dotenv import load_dotenv
+6 from langchain.agents import AgentExecutor, create_openai_tools_agent
+7 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+8 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+9 from langchain_core.runnables.base import RunnableSequence
+10 from langchain_core.tools import BaseTool, Tool
+11 from langchain_openai import ChatOpenAI
+12 
+13 logger = logging.getLogger(__name__)
+14 
+15 
+16 @dataclass
+17 class AIConfig:
+18     model_name: str = "gpt-4o"
+19     temperature: float = 0.7
+20     verbose: bool = True
+21     max_retries: int = 3
+22     request_timeout: int = 180
+23     sys_prompt: str = "You are a helpful AI assistant."
+24     base_url: str = None
+25     api_key: str = None
+26 
+27 
+28 class AIAssistant:
+29     """AI 助手类，负责与 AI 模型交互"""
+30 
+31     def __init__(self, config: AIConfig, tools: Optional[List[BaseTool]] = None):
+32         """
+33         初始化 AI 助手
+34 
+35         Args:
+36             config: AIConfig 实例，包含必要的配置信息
+37             tools: 可选的工具列表
+38         """
+39         self.config = config
+40         self.tools = tools or []
+41         self.llm = self._init_llm()
+42         self.agent = None
+43 
+44         # Initialize agent if tools are provided
+45         if self.tools:
+46             self.agent = self._init_agent()
+47 
+48     def _init_llm(self) -> ChatOpenAI:
+49         """Initialize the language model"""
+50         callbacks = [StreamingStdOutCallbackHandler()] if self.config.verbose else None
+51         
+52         return ChatOpenAI(
+53             base_url=self.config.base_url,
+54             api_key=self.config.api_key,
+55             model_name=self.config.model_name,
+56             temperature=self.config.temperature,
+57             request_timeout=self.config.request_timeout,
+58             max_retries=self.config.max_retries,
+59             callbacks=callbacks,
+60         )
+61 
+62     def _init_agent(self) -> AgentExecutor:
+63         """Initialize the agent with tools"""
+64         # 创建提示模板
+65         prompt = ChatPromptTemplate.from_messages([
+66             ("system", self.config.sys_prompt),
+67             ("human", "{input}"),
+68             MessagesPlaceholder(variable_name="agent_scratchpad"),
+69         ])
+70 
+71         # 创建代理
+72         agent = create_openai_tools_agent(self.llm, self.tools, prompt)
+73         
+74         # 创建代理执行器
+75         return AgentExecutor(
+76             agent=agent, 
+77             tools=self.tools, 
+78             verbose=self.config.verbose,
+79             max_iterations=5,
+80             handle_parsing_errors=True
+81         )
+82 
+83     def _create_simple_chain(self) -> RunnableSequence:
+84         """创建简单的对话链，不使用工具"""
+85         from langchain_core.prompts import ChatPromptTemplate
+86         
+87         # 创建提示模板
+88         prompt = ChatPromptTemplate.from_messages([
+89             ("system", self.config.sys_prompt),
+90             ("human", "{input}")
+91         ])
+92         
+93         # 创建简单链
+94         chain = prompt | self.llm | (lambda x: x.content)
+95         
+96         return chain
+97 
+98     def add_tool(self, tool: BaseTool) -> None:
+99         """
+100         添加工具
+101 
+102         Args:
+103             tool: 要添加的工具
+104         """
+105         # 检查是否已经有同名工具
+106         for existing_tool in self.tools:
+107             if existing_tool.name == tool.name:
+108                 # 替换同名工具
+109                 self.tools.remove(existing_tool)
+110                 break
+111                 
+112         # 添加新工具
+113         self.tools.append(tool)
+114         
+115         # 重新初始化代理
+116         self.agent = self._init_agent()
+117 
+118     def generate_response(
+119         self, prompt: str, use_tools: bool = False, **kwargs: Any
+120     ) -> str:
+121         """
+122         生成响应
+123 
+124         Args:
+125             prompt: 用户的提示词
+126             use_tools: 是否使用工具
+127             **kwargs: 其他参数
+128 
+129         Returns:
+130             str: 生成的响应
+131         """
+132         try:
+133             if use_tools and self.tools:
+134                 # 确保代理已初始化
+135                 if self.agent is None:
+136                     self.agent = self._init_agent()
+137                     
+138                 # 使用代理生成响应
+139                 response = self.agent.invoke({"input": prompt})
+140                 return response["output"]
+141             else:
+142                 # 使用简单链生成响应，始终使用流式输出
+143                 chain = self._create_simple_chain()
+144                 
+145                 # 使用流式输出
+146                 response_chunks = []
+147                 for chunk in chain.stream({"input": prompt}):
+148                     # 实时打印每个生成的文本块
+149                     print(chunk, end="", flush=True)
+150                     response_chunks.append(chunk)
+151                 
+152                 # response_chunks 连接起来就是完整的响应结果
+153                 return "".join(response_chunks)
+154         except Exception as e:
+155             logger.error(f"生成响应时出错: {str(e)}")
+156             raise
+157 
+158 
+159 def create_example_tool() -> Tool:
+160     """Create an example tool for demonstration"""
+161 
+162     def calculator(expression: str) -> str:
+163         try:
+164             return str(eval(expression))
+165         except Exception as e:
+166             return f"Error calculating: {str(e)}"
+167 
+168     return Tool(
+169         name="calculator",
+170         description="Useful for performing mathematical calculations. Input should be a mathematical expression.",
+171         func=calculator,
+172         return_direct=True,
+173     )
+174 
+175 
+176 if __name__ == "__main__":
+177     load_dotenv()
+178     # Initialize the assistant with a tool
+179     assistant = AIAssistant(
+180         config=AIConfig(
+181             temperature=0.7,
+182         ),
+183         tools=[create_example_tool()],
+184     )
+185 
+186     response = assistant.generate_response("What is 15 * 7?", use_tools=True)
+187     print(f"Response: {response}")
+188
+```
+
+
+
+
+# 用户需求
+
+
+    ##背景：
+    此项目是一个根据用户issues生成代码并回复的Agent，一轮回复后，用户可能会可能会进行评论，每一轮交互的log都保存在格式为
+    project_dir/.eng/memory/isseus/#1/round_1的目录下
+    
+    每一个文件都会严格按照该格式进行保存
+    ##任务：
+    实现一个版本信息管理，根据交互的过程，确定当前版本，并给出当前版本的历史执行过程作为本轮对话的memory。
+    ###主流程
+    0、先通过代码提取所有文件的有效信息
+    1、AI来决策是否需要版本回退，意思是之前的操作如果被用户全盘否定，那么就需要回退操作状态。
+    3、版本回退解释
+        当前issues#1执行到round_6，但是AI判断用户不想要round4和round5改的代码，希望重新改，那么就应该
+        1）把git状态回退到round3，拉取远端的bella-bot-issues-1-3，并hard reset
+        2) 将提取出的round_4和round_5结合当前用户需求，整合为一个新的需求，作为用户本轮的需求
+    4、将用户的本轮需求作为当前任务，提取出的信息作为执行过程
+
+    
+    ###通过代码提取
+    0、通过log_manager.LogManager#get_issue_log_entries 获取所有轮次的日志信息，进行如下处理
+    
+    1、步骤0提取的prompt通过PromptGenerator.extractInfo提取requirement，着就是该轮的用户需求
+    
+    2、步骤1提取requirement和步骤0提取的response，分别用requirement 和 agent_response 来标识
+    
+    3、不同轮次之间要有标识，如：
+    【round_1】
+    
+    ###AI决策
+    使用ai.py
+    根据用户本轮的需求，结合历史执行记录，判断是否需要回退版本。
+    如果需要则将回退的版本信息和用户当前需求进行整合，作为本轮需求。
+    并且执行版本回退工具。
+    版本回退作为一个工具，参数为current_requirement和round_num。AI来决定是否调用。
+    

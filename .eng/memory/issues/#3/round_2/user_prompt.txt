@@ -1,0 +1,1145 @@
+# 项目文件描述
+
+
+- core/workflow_engine.py: 工作流引擎类框架，协调版本管理、日志管理和AI交互。目前仅包含基本配置数据类，尚未实现完整功能。
+
+- core/version_manager.py: 版本管理模块，负责代码生成的版本控制和历史追踪。提供历史轮次日志提取、版本回退分析和执行功能，与Git管理器交互。
+
+- core/ai.py: AI助手类，封装与AI模型的交互。支持基本对话和工具调用，提供模型响应生成、工具集成和流式输出功能。
+
+- core/code_engineer.py: 代码工程师核心类，处理用户prompt，与AI交互并应用修改。负责读取系统提示词、生成AI响应、解析diff并修改文件，支持日志归档。
+
+- generate.py: 主程序入口，演示版本信息管理实现。包含需求描述、文件选择和代码生成流程，实现根据用户交互确定当前版本并提供历史执行过程的功能。
+
+- pyproject.toml: 项目配置文件，定义了项目元数据、依赖包和工具配置。包含Poetry构建配置、Python版本要求、代码风格工具设置等项目级别的配置信息。
+
+
+# 文件内容
+
+
+
+```
+File: core/workflow_engine.py
+1 import logging
+2 from dataclasses import dataclass
+3 from typing import Optional
+4 
+5 from core.ai import AIAssistant, AIConfig
+6 from core.git_manager import GitManager, GitConfig
+7 from core.log_manager import LogManager, LogConfig
+8 from core.prompt_generator import PromptGenerator, PromptData
+9 from core.version_manager import VersionManager
+10 
+11 logger = logging.getLogger(__name__)
+12 
+13 @dataclass
+14 class WorkflowEngineConfig:
+15     project_dir: str
+16     issue_id:int
+17     core_model:str = "gpt-4o"
+18     data_model:str = "gpt-4o"
+19     core_template: int = 0.7
+20     data_template: int = 0.7
+21     base_url: Optional[str] = None
+22     api_key: Optional[str] = None
+23     github_remote_url: Optional[str] =None
+24     github_token: Optional[str] = None
+25 
+26 
+27 class WorkflowEngine:
+28     """
+29     工作流引擎，协调版本管理、日志管理和AI交互
+30     """
+31
+```
+
+
+
+
+```
+File: core/version_manager.py
+1 """
+2 版本管理模块，处理代码生成的版本控制、历史追踪和回退功能。
+3 
+4 该模块提供了以下功能:
+5 1. 提取历史轮次的日志信息
+6 2. 格式化历史执行记录用于AI参考
+7 3. 分析用户需求，决定是否需要版本回退
+8 4. 执行Git版本回退操作
+9 5. 为AI助手提供版本回退工具
+10 """
+11 
+12 import logging
+13 from dataclasses import dataclass
+14 from typing import List, Tuple, Optional
+15 
+16 from langchain_core.tools import Tool, StructuredTool
+17 from pydantic import BaseModel, Field
+18 
+19 from core.ai import AIConfig, AIAssistant
+20 from core.git_manager import GitManager
+21 from core.log_manager import LogManager
+22 from core.prompt_generator import PromptGenerator
+23 
+24 logger = logging.getLogger(__name__)
+25 
+26 
+27 @dataclass
+28 class VersionInfo:
+29     """存储特定版本的信息"""
+30     issue_id: int
+31     round_num: int
+32     requirement: str
+33     agent_response: str
+34     branch_name: str = ""
+35     
+36     def get_branch_name(self) -> str:
+37         """获取对应的Git分支名"""
+38         if not self.branch_name:
+39             self.branch_name = f"bella-bot-issues-{self.issue_id}-{self.round_num}"
+40         return self.branch_name
+41 
+42 
+43 class VersionManager:
+44     """管理代码生成的版本信息，支持版本回退和需求整合"""
+45 
+46     def __init__(self, issue_id : int, ai_config: AIConfig, log_manager: LogManager, git_manager: GitManager):
+47         """
+48         初始化版本管理器
+49         
+50         Args:
+51             log_manager: 日志管理器实例
+52             git_manager: Git管理器实例
+53         """
+54         self.ai_assistant = AIAssistant(config=ai_config, tools=[self._create_version_rollback_manager_tool()])
+55         self.log_manager = log_manager
+56         self.git_manager = git_manager
+57         self.current_issue_id = issue_id
+58         self.current_round_num = log_manager.get_current_round()
+59 
+60     def ensure_version_and_generate_context(self, requirement: str) -> tuple[str, str]:
+61         if self.current_round_num > 2 :
+62             requirement = self._analyze_rollback_need(requirement)
+63         history = self.get_formatted_history()
+64         return requirement, history
+65 
+66     def _extract_history(self) -> List[VersionInfo]:
+67         """
+68         提取当前issue的历史版本信息
+69             
+70         Returns:
+71             List[VersionInfo]: 历史版本信息列表
+72         """
+73         # 获取所有轮次的日志条目
+74         log_entries = self.log_manager.get_issue_log_entries()
+75         
+76         # 提取每轮的需求和响应
+77         version_info_list = []
+78         for entry in log_entries:
+79             try:
+80                 # 从用户提示中提取需求
+81                 extracted_info = PromptGenerator.extractInfo(entry.prompt)
+82                 requirement = extracted_info.requirement
+83                 
+84                 # 创建版本信息
+85                 version_info = VersionInfo(
+86                     issue_id=self.current_issue_id,
+87                     round_num=entry.round_num,
+88                     requirement=requirement,
+89                     agent_response=entry.response,
+90                 )
+91                 version_info_list.append(version_info)
+92                 
+93             except Exception as e:
+94                 logger.error(f"提取轮次 {entry.round_num} 的信息时出错: {str(e)}")
+95         
+96         return version_info_list
+97 
+98     def get_formatted_history(self) -> str:
+99         """
+100         获取格式化的历史执行记录
+101         
+102         Args:
+103             
+104         Returns:
+105             str: 格式化的历史执行记录
+106         """
+107         history = self._extract_history()
+108         formatted_history = []
+109         
+110         for version in history:
+111             formatted_history.append(f"【round_{version.round_num}】")
+112             formatted_history.append(f"requirement: \n{version.requirement}")
+113             
+114             # 简化AI响应，避免历史记录过长
+115             formatted_history.append(f"agent_response: \n{version.agent_response}")
+116             formatted_history.append("")  # 添加空行分隔
+117         
+118         return "\n".join(formatted_history)
+119 
+120     def _analyze_rollback_need(self,
+121                               current_requirement: str) -> str:
+122         """
+123         分析是否需要版本回退
+124         
+125         Args:
+126             current_requirement: 当前用户需求
+127             
+128         Returns:
+129             Tuple[bool, int, str]: (是否需要回退, 回退到的轮次, 整合后的需求)
+130         """
+131         # 获取历史记录
+132         history = self.get_formatted_history()
+133         
+134         # 构建提示词
+135         prompt = f"""
+136 # 角色
+137 你是一位资深程序员，现在在处理用户的issues，请分析本次用户提出的需求和历史执行记录，判断之前提交的代码是否需要版本回退：
+138 
+139 # 历史执行记录
+140 {history}
+141 
+142 # 当前用户需求
+143 {current_requirement}
+144 
+145 
+146 #执行步骤
+147 ##工具参数分析
+148 你需要调用 version_rollback_manager 工具来处理问题，请请根据上述信息分析以下问题，
+149 1. 是否需要回退到某个特定版本? 如果需要，则调用工具时的参数 need_rollback 为 True
+150 2. 如果需要回退，应该回退到哪个round?  调用工具时的参数，至少为1，必须保留第一轮的结果
+151 3. 如果需要回退，当前需求的信息是否完整？需要把回退到的round之后的round需求与当前需求结合，作为补充信息吗? 如果需要结合，则将重写后的本轮需求，作为integrated_requirement参数；如果不需要则不需要此参数。
+152 
+153 ##工具执行
+154 根据得到的参数，调用version_rollback_manager工具
+155 
+156 """
+157 
+158         # 发送给AI进行分析
+159         response = self.ai_assistant.generate_response(prompt)
+160 
+161         return response if response else current_requirement
+162 
+163     def _rollback_to_version(self, target_round: int) -> bool:
+164         """
+165         执行版本回退
+166         
+167         Args:
+168             target_round: 目标轮次
+169             
+170         Returns:
+171             bool: 回退是否成功
+172         """
+173         try:
+174             # 构建目标分支名
+175             target_branch = self.git_manager.get_issues_branch_name(self.current_issue_id, target_round)
+176             self.git_manager.reset_to(target_branch)
+177             return True
+178             
+179         except Exception as e:
+180             logger.error(f"版本回退失败: {str(e)}")
+181             return False
+182 
+183     class _VersionRollbackManagerSchema(BaseModel):
+184         need_rollback: bool = Field(
+185             ...,
+186             examples=[True, False],
+187             description="是否需要回退版本"
+188         )
+189         target_round: int = Field(
+190             ...,
+191             examples=[1,2,3,4],
+192             description="要回滚到的目标轮次，只有need_rollback为True时需要且必须"
+193         )
+194         integrated_requirement: str = Field(
+195             ...,
+196             description="整合后的需求，只有need_rollback为True且需要重写需求时需要"
+197         )
+198 
+199     def _create_version_rollback_manager_tool(self) -> StructuredTool:
+200         """
+201         创建版本回退工具，供AI助手使用
+202             
+203         Returns:
+204             Tool: 版本回退工具
+205         """
+206         def version_rollback_manager_tool(need_rollback: bool,
+207                                           target_round: Optional[int],
+208                                           integrated_requirement: Optional[str]) -> Optional[str]:
+209             """
+210             决定是否回退版本并执行回退
+211             
+212             Args:
+213                 need_rollback:是否需要回退,
+214                 target_round：回退到的轮次,
+215                 integrated_requirement： 整合后的需求
+216                 
+217             Returns:
+218                 str: 执行结果
+219             """
+220             
+221             if need_rollback and target_round and target_round > 0:
+222                 success = self._rollback_to_version(target_round)
+223                 if(success) :
+224                     return integrated_requirement
+225                 else:
+226                     logger.warning(f"版本回退失败:issues:{self.current_issue_id},target:{target_round},integrated_requirement:{integrated_requirement}")
+227             return None
+228         
+229         return StructuredTool.from_function(
+230             name="version_rollback_manager",
+231             description="用于决定是否回退代码版本的工具，如果 need_rollback 为True，则根据target_round和integrated_requirement进行版本回退",
+232             func=version_rollback_manager_tool,
+233             return_direct=True,
+234             args_schema=self._VersionRollbackManagerSchema
+235         )
+236
+```
+
+
+
+
+```
+File: core/ai.py
+1 import logging
+2 from dataclasses import dataclass
+3 from typing import Any, List, Optional
+4 
+5 from dotenv import load_dotenv
+6 from langchain.agents import AgentExecutor, create_openai_tools_agent
+7 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+8 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+9 from langchain_core.runnables.base import RunnableSequence
+10 from langchain_core.tools import BaseTool, Tool
+11 from langchain_openai import ChatOpenAI
+12 
+13 logger = logging.getLogger(__name__)
+14 
+15 
+16 @dataclass
+17 class AIConfig:
+18     model_name: str = "gpt-4o"
+19     temperature: float = 0.7
+20     verbose: bool = True
+21     max_retries: int = 3
+22     request_timeout: int = 180
+23     sys_prompt: str = "You are a helpful AI assistant."
+24     base_url: Optional[str] = None
+25     api_key: Optional[str] = None
+26 
+27 
+28 class AIAssistant:
+29     """AI 助手类，负责与 AI 模型交互"""
+30 
+31     def __init__(self, config: AIConfig, tools: Optional[List[BaseTool]] = None):
+32         """
+33         初始化 AI 助手
+34 
+35         Args:
+36             config: AIConfig 实例，包含必要的配置信息
+37             tools: 可选的工具列表
+38         """
+39         self.config = config
+40         self.tools = tools or []
+41         self.llm = self._init_llm()
+42         self.agent = None
+43 
+44         # Initialize agent if tools are provided
+45         if self.tools:
+46             self.agent = self._init_agent()
+47 
+48     def _init_llm(self) -> ChatOpenAI:
+49         """Initialize the language model"""
+50         callbacks = [StreamingStdOutCallbackHandler()] if self.config.verbose else None
+51         
+52         return ChatOpenAI(
+53             base_url=self.config.base_url,
+54             api_key=self.config.api_key,
+55             model=self.config.model_name,
+56             temperature=self.config.temperature,
+57             timeout=self.config.request_timeout,
+58             max_retries=self.config.max_retries,
+59             callbacks=callbacks,
+60         )
+61 
+62     def _init_agent(self) -> AgentExecutor:
+63         """Initialize the agent with tools"""
+64         # 创建提示模板
+65         prompt = ChatPromptTemplate.from_messages([
+66             ("system", self.config.sys_prompt),
+67             ("human", "{input}"),
+68             MessagesPlaceholder(variable_name="agent_scratchpad"),
+69         ])
+70 
+71         # 创建代理
+72         agent = create_openai_tools_agent(self.llm, self.tools, prompt)
+73         
+74         # 创建代理执行器
+75         return AgentExecutor(
+76             agent=agent, 
+77             tools=self.tools, 
+78             verbose=self.config.verbose,
+79             max_iterations=5,
+80             handle_parsing_errors=True
+81         )
+82 
+83     def _create_simple_chain(self) -> RunnableSequence:
+84         """创建简单的对话链，不使用工具"""
+85         from langchain_core.prompts import ChatPromptTemplate
+86         
+87         # 创建提示模板
+88         prompt = ChatPromptTemplate.from_messages([
+89             ("system", self.config.sys_prompt),
+90             ("human", "{input}")
+91         ])
+92         
+93         # 创建简单链
+94         chain = prompt | self.llm | (lambda x: x.content)
+95         
+96         return chain
+97 
+98     def add_tool(self, tool: BaseTool) -> None:
+99         """
+100         添加工具
+101 
+102         Args:
+103             tool: 要添加的工具
+104         """
+105         # 检查是否已经有同名工具
+106         for existing_tool in self.tools:
+107             if existing_tool.name == tool.name:
+108                 # 替换同名工具
+109                 self.tools.remove(existing_tool)
+110                 break
+111                 
+112         # 添加新工具
+113         self.tools.append(tool)
+114         
+115         # 重新初始化代理
+116         self.agent = self._init_agent()
+117 
+118     def generate_response(
+119         self, prompt: str, use_tools: bool = False, **kwargs: Any
+120     ) -> str:
+121         """
+122         生成响应
+123 
+124         Args:
+125             prompt: 用户的提示词
+126             use_tools: 是否使用工具
+127             **kwargs: 其他参数
+128 
+129         Returns:
+130             str: 生成的响应
+131         """
+132         try:
+133             if use_tools and self.tools:
+134                 # 确保代理已初始化
+135                 if self.agent is None:
+136                     self.agent = self._init_agent()
+137                     
+138                 # 使用代理生成响应
+139                 response = self.agent.invoke({"input": prompt})
+140                 return response["output"]
+141             else:
+142                 # 使用简单链生成响应，始终使用流式输出
+143                 chain = self._create_simple_chain()
+144                 
+145                 # 使用流式输出
+146                 response_chunks = []
+147                 for chunk in chain.stream({"input": prompt}):
+148                     # 实时打印每个生成的文本块
+149                     print(chunk, end="", flush=True)
+150                     response_chunks.append(chunk)
+151                 
+152                 # response_chunks 连接起来就是完整的响应结果
+153                 return "".join(response_chunks)
+154         except Exception as e:
+155             logger.error(f"生成响应时出错: {str(e)}")
+156             raise
+157 
+158 
+159 def create_example_tool() -> Tool:
+160     """Create an example tool for demonstration"""
+161 
+162     def calculator(expression: str) -> str:
+163         try:
+164             return str(eval(expression))
+165         except Exception as e:
+166             return f"Error calculating: {str(e)}"
+167 
+168     return Tool(
+169         name="calculator",
+170         description="Useful for performing mathematical calculations. Input should be a mathematical expression.",
+171         func=calculator,
+172         return_direct=True,
+173     )
+174 
+175 
+176 if __name__ == "__main__":
+177     load_dotenv()
+178     # Initialize the assistant with a tool
+179     assistant = AIAssistant(
+180         config=AIConfig(
+181             temperature=0.7,
+182         ),
+183         tools=[create_example_tool()],
+184     )
+185 
+186     response = assistant.generate_response("What is 15 * 7?", use_tools=True)
+187     print(f"Response: {response}")
+188
+```
+
+
+
+
+```
+File: core/code_engineer.py
+1 import logging
+2 import os
+3 from dataclasses import dataclass
+4 
+5 from dotenv import load_dotenv
+6 from typing_extensions import Optional
+7 from core.ai import AIAssistant, AIConfig
+8 from core.diff import Diff
+9 from core.log_manager import LogManager, LogConfig
+10 
+11 logger = logging.getLogger(__name__)
+12 
+13 
+14 @dataclass
+15 class CodeEngineerConfig:
+16     """代码工程师配置"""
+17     project_dir: str
+18     ai_config: AIConfig
+19     system_prompt: Optional[str] = None
+20     max_retries: int = 3
+21 
+22 
+23 class CodeEngineer:
+24     """
+25     代码工程师类，负责处理用户的 prompt，与 AI 模型交互，解析 diff 并修改文件
+26     """
+27 
+28     def __init__(self, config: CodeEngineerConfig, log_manager: LogManager, diff: Diff):
+29         """
+30         初始化代码工程师
+31 
+32         Args:
+33             config: CodeEngineerConfig 实例，包含必要的配置信息
+34             log_manager: LogManager 实例，用于日志管理
+35         """
+36         self.config = config
+37         self.log_manager = log_manager
+38         self.diff = diff
+39 
+40 
+41         if config.system_prompt:
+42             self.system_prompt = config.system_prompt
+43         else:
+44             # 读取系统提示词
+45             self.system_prompt = self._read_system_prompt()
+46 
+47         config.ai_config.sys_prompt = self.system_prompt
+48         self.ai_assistant = AIAssistant(config=config.ai_config)
+49         # 用于存储处理失败的文件
+50         self.failed_files = []
+51 
+52     def _read_system_prompt(self) -> str:
+53         """
+54         读取系统提示词
+55 
+56         Returns:
+57             str: 系统提示词内容
+58         """
+59         try:
+60             system_prompt_path = os.path.join(self.config.project_dir, "system.txt")
+61             if os.path.exists(system_prompt_path):
+62                 with open(system_prompt_path, "r", encoding="utf-8") as f:
+63                     return f.read()
+64             else:
+65                 logger.warning(f"系统提示词文件不存在: {system_prompt_path}，使用默认提示词")
+66                 return "You will get instructions for code to write. Output requested code changes in the unified git diff syntax."
+67         except Exception as e:
+68             logger.error(f"读取系统提示词失败: {str(e)}")
+69             return "You will get instructions for code to write. Output requested code changes in the unified git diff syntax."
+70 
+71     def process_prompt(self, prompt: str, issue_id: int) -> bool:
+72         """
+73         处理用户的 prompt，与 AI 模型交互，解析 diff 并修改文件
+74 
+75         Args:
+76             prompt: 用户的 prompt
+77             issue_id: GitHub issue 的 ID
+78 
+79         Returns:
+80             bool: 处理是否成功
+81         """
+82         try:
+83             # 重置失败文件列表
+84             self.failed_files = []
+85             
+86             # 设置 AI 助手的系统提示词
+87             self.ai_assistant.config.sys_prompt = self.system_prompt
+88             
+89             # 调用 AI 模型生成响应
+90             response = self.ai_assistant.generate_response(prompt)
+91             
+92             # 解析响应中的 diff
+93             diffs = Diff.parse_diffs_from_text(response)
+94             
+95             if not diffs:
+96                 logger.warning("未找到有效的 diff")
+97                 return False
+98             
+99             # 处理每个 diff
+100             self.failed_files = self.diff.process_diffs(diffs, self.config.project_dir)
+101             
+102             # 归档日志
+103             self.log_manager.archive_logs(
+104                 sys_prompt=self.system_prompt,
+105                 prompt=prompt,
+106                 response=response
+107             )
+108             
+109             # 如果有失败的文件，可以在这里处理
+110             if self.failed_files:
+111                 logger.warning(f"有 {len(self.failed_files)} 个文件处理失败")
+112                 # 这里可以添加失败文件的重试逻辑，但根据需求，暂时不实现
+113                 return False
+114             
+115             return True
+116         except Exception as e:
+117             logger.error(f"处理 prompt 失败: {str(e)}")
+118             return False
+119 
+120     def retry_failed_files(self, prompt: str, issue_id: int) -> bool:
+121         """
+122         重试处理失败的文件（钩子方法，暂不实现具体逻辑）
+123 
+124         Args:
+125             prompt: 用户的 prompt
+126             issue_id: GitHub issue 的 ID
+127 
+128         Returns:
+129             bool: 重试是否成功
+130         """
+131         # 这是一个钩子方法，用于未来扩展
+132         # 根据需求，暂时不实现具体逻辑
+133         logger.info(f"重试处理失败的文件: {self.failed_files}")
+134         return False
+135 
+136 if __name__ == "__main__":
+137     load_dotenv()
+138     prompt = '''
+139     '''
+140     config = CodeEngineerConfig(project_dir="../.", ai_config=AIConfig(
+141         temperature=1,
+142         model_name="claude-3.7-sonnet"
+143     ))
+144 
+145     engineer = CodeEngineer(config, LogManager(LogConfig("../.", 1)), Diff(AIConfig(temperature=0.1,
+146                                                                                  model_name="gpt-4o")))
+147     engineer.process_prompt(prompt, 1)
+148
+```
+
+
+
+
+```
+File: generate.py
+1 import os
+2 
+3 from dotenv import load_dotenv
+4 
+5 from core.ai import AIConfig
+6 from core.code_engineer import CodeEngineerConfig, CodeEngineer
+7 from core.diff import Diff
+8 from core.file_memory import FileMemory
+9 from core.file_selector import FileSelector
+10 from core.log_manager import LogManager, LogConfig
+11 from core.prompt_generator import PromptData, PromptGenerator
+12 
+13 
+14 def main():
+15     load_dotenv()
+16 
+17     requirement = f"""
+18     ##背景：
+19     此项目是一个根据用户issues生成代码并回复的Agent，一轮回复后，用户可能会可能会进行评论，每一轮交互的log都保存在格式为
+20     project_dir/.eng/memory/isseus/#1/round_1的目录下
+21     
+22     每一个文件都会严格按照该格式进行保存
+23     ##任务：
+24     实现一个版本信息管理，根据交互的过程，确定当前版本，并给出当前版本的历史执行过程作为本轮对话的memory。
+25     ###主流程
+26     0、先通过代码提取所有文件的有效信息
+27     1、AI来决策是否需要版本回退，意思是之前的操作如果被用户全盘否定，那么就需要回退操作状态。
+28     3、版本回退解释
+29         当前issues#1执行到round_6，但是AI判断用户不想要round4和round5改的代码，希望重新改，那么就应该
+30         1）把git状态回退到round3，拉取远端的bella-bot-issues-1-3，并hard reset
+31         2) 将提取出的round_4和round_5结合当前用户需求，整合为一个新的需求，作为用户本轮的需求
+32     4、将用户的本轮需求作为当前任务，提取出的信息作为执行过程
+33 
+34     
+35     ###通过代码提取
+36     0、通过log_manager.LogManager#get_issue_log_entries 获取所有轮次的日志信息，进行如下处理
+37     
+38     1、步骤0提取的prompt通过PromptGenerator.extractInfo提取requirement，着就是该轮的用户需求
+39     
+40     2、步骤1提取requirement和步骤0提取的response，分别用requirement 和 agent_response 来标识
+41     
+42     3、不同轮次之间要有标识，如：
+43     【round_1】
+44     
+45     ###AI决策
+46     使用ai.py
+47     根据用户本轮的需求，结合历史执行记录，判断是否需要回退版本。
+48     如果需要则将回退的版本信息和用户当前需求进行整合，作为本轮需求。
+49     并且执行版本回退工具。
+50     版本回退作为一个工具，参数为current_requirement和round_num。AI来决定是否调用。
+51     """
+52 
+53     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "."))
+54     selector = FileSelector(
+55         project_dir,
+56         2,
+57         ai_config=AIConfig(temperature=1, model_name="coder-model"),
+58     )
+59 
+60     files = selector.select_files_for_requirement(requirement)
+61 
+62     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+63 
+64     data = PromptData(project_dir = project_dir, files=files, file_desc=descriptions, requirement=requirement, steps=None)
+65 
+66     prompt = PromptGenerator.generatePrompt(data)
+67 
+68     config = CodeEngineerConfig(project_dir=project_dir, ai_config=AIConfig(
+69         temperature=1,
+70         model_name="coder-model"
+71     ))
+72 
+73     engineer = CodeEngineer(config, LogManager(LogConfig(project_dir=project_dir, issue_id=2)), Diff(AIConfig(temperature=0.1,
+74                                                                                  model_name="gpt-4o")))
+75     engineer.process_prompt(prompt, 2)
+76 
+77 if __name__ == "__main__":
+78     main()
+79
+```
+
+
+
+
+```
+File: pyproject.toml
+1 [tool.poetry]
+2 name = "bella-issues-bot"
+3 version = "0.1.0"
+4 description = ""
+5 authors = [""]
+6 license = "MIT"
+7 readme = "README.md"
+8 homepage = ""
+9 repository = ""
+10 documentation = ""
+11 classifiers = [
+12   "Development Status :: 4 - Beta",
+13   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+14 ]
+15 
+16 [build-system]
+17 requires = ["poetry-core>=1.0.0"]
+18 build-backend = "poetry.core.masonry.api"
+19 
+20 [tool.poetry.dependencies]
+21 python = ">=3.10,<3.13"
+22 gitpython = "^3.1.40"
+23 PyGithub = "^2.1.1"
+24 langchain = ">=0.3.0,<0.4.0"
+25 langchain-openai = ">=0.1.0"
+26 langchain-core = ">=0.3.0,<0.4.0"
+27 langchain-community = ">=0.3.0,<0.4.0"
+28 python-dotenv = "^1.0.0"
+29 pydantic = "^2.5.0"
+30 openai = "^1.3.5"
+31 pytest = "^7.4.0"
+32 pathspec = ">=0.9.0"
+33 toml = ">=0.10.2"
+34 typing-extensions = ">=4.0.0"
+35 jinja2 = ">=3.1.0,<4.0.0"
+36 
+37 [tool.poetry.scripts]
+38 bella-issuses-bot = ''
+39 
+40 [tool.ruff]
+41 select = ["F", "E", "W", "I001"]
+42 show-fixes = false
+43 target-version = "py310"
+44 task-tags = ["TODO", "FIXME"]
+45 extend-ignore = ["E501", "E722"]
+46 
+47 [tool.black]
+48 target-version = ["py310"]
+49 
+50 [tool.ruff.isort]
+51 known-first-party = []
+52 known-third-party = []
+53 section-order = [
+54   "future",
+55   "standard-library",
+56   "third-party",
+57   "first-party",
+58   "local-folder",
+59 ]
+60 combine-as-imports = true
+61 split-on-trailing-comma = false
+62 lines-between-types = 1
+```
+
+
+
+
+# 历史执行信息
+
+【round_1】
+requirement: 
+新增一个example文件，展示如果调用code_engineer写代码
+agent_response: 
+I'll create a new example file that demonstrates how to use the `CodeEngineer` class to write code. I'll implement this as a comprehensive example that shows the complete workflow of using the `CodeEngineer` class.
+
+Let's start by analyzing the existing code structure and then implement a new example file.
+
+```diff
+--- /dev/null
++++ examples/example_code_engineer.py
+@@ -0,0 +1,105 @@
++"""
++Example script demonstrating how to use the CodeEngineer class to generate and apply code changes.
++This example shows how to:
++1. Set up the CodeEngineer with proper configuration
++2. Prepare a user prompt for code generation
++3. Process the prompt and apply the changes
++4. Handle the response and check the results
++"""
++
++import os
++import sys
++from dotenv import load_dotenv
++
++# Add parent directory to path for imports
++sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from core.ai import AIConfig
++from core.code_engineer import CodeEngineer, CodeEngineerConfig
++from core.diff import Diff
++from core.log_manager import LogManager, LogConfig
++
++
++def main():
++    # Load environment variables
++    load_dotenv()
++    
++    # Define the project directory
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
++    
++    # Define an issue ID for tracking purposes
++    issue_id = 100  # Use a unique issue ID for this example
++    
++    print(f"Starting CodeEngineer example with project directory: {project_dir}")
++    print(f"Using issue ID: {issue_id}")
++    
++    # 1. Set up configurations
++    
++    # Configure AI settings
++    ai_config = AIConfig(
++        model_name="claude-3.7-sonnet",  # You can change this to any model you have access to
++        temperature=0.7,  # Adjust creativity vs. determinism (0.0-1.0)
++        max_tokens=4000,  # Maximum tokens for AI responses
++    )
++    
++    # Configure the CodeEngineer
++    code_engineer_config = CodeEngineerConfig(
++        project_dir=project_dir,
++        ai_config=ai_config,
++        max_retries=2  # Number of retries for failed operations
++    )
++    
++    # Configure logging
++    log_config = LogConfig(
++        project_dir=project_dir,
++        issue_id=issue_id
++    )
++    log_manager = LogManager(config=log_config)
++    
++    # Create a Diff processor with a more deterministic temperature setting
++    # Using a lower temperature for the diff processing helps ensure more reliable code changes
++    diff_processor = Diff(AIConfig(temperature=0.1, model_name="claude-3.7-sonnet"))
++    
++    # 2. Initialize the CodeEngineer
++    engineer = CodeEngineer(
++        config=code_engineer_config,
++        log_manager=log_manager,
++        diff=diff_processor
++    )
++    
++    # 3. Define a user prompt for code generation
++    user_prompt = """
++    Create a simple Python utility function that:
++    
++    1. Takes a list of numbers as input
++    2. Filters out all negative numbers
++    3. Calculates the average of the remaining positive numbers
++    4. Returns the average, or 0 if there are no positive numbers
++    
++    Please implement this in a new file called 'utils/math_helpers.py'.
++    Make sure to include proper documentation and unit tests in 'tests/test_math_helpers.py'.
++    """
++    
++    print("\nProcessing prompt with CodeEngineer...")
++    print("-" * 50)
++    print(f"User prompt:\n{user_prompt}")
++    print("-" * 50)
++    
++    # 4. Process the prompt with the CodeEngineer
++    success = engineer.process_prompt(prompt=user_prompt, issue_id=issue_id)
++    
++    # 5. Check the results
++    if success:
++        print("\nSuccessfully processed the prompt!")
++        print("The requested changes have been applied to the codebase.")
++        print(f"You can find the logs in: {os.path.join(project_dir, '.eng', 'memory', f'issues#{issue_id}')}")
++    else:
++        print("\nFailed to process the prompt.")
++        print(f"Failed files: {engineer.failed_files}")
++        print("Check the logs for more details.")
++    
++    print("\nExample completed!")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+```diff
+--- /dev/null
++++ examples/README.md
+@@ -0,0 +1,30 @@
++# Code Engineer Examples
++
++This directory contains examples demonstrating how to use the Code Engineer framework for various use cases.
++
++## Available Examples
++
++### `example_generate.py`
++
++Demonstrates a complete workflow of generating code based on requirements, including:
++- File selection
++- Version management
++- Git integration
++- Code generation and application
++
++### `example_code_engineer.py`
++
++A focused example on how to use the `CodeEngineer` class directly to:
++- Generate code based on a user prompt
++- Apply changes to the codebase
++- Handle errors and logging
++
++## Running Examples
++
++To run an example, execute the following command from the project root:
++
++```
++python -m examples.example_code_engineer
++```
++
++Make sure all required environment variables are properly set in your `.env` file.
+```
+
+Now let's create a more comprehensive example that demonstrates using CodeEngineer with the file selector, prompt generator, and other components:
+
+```diff
+--- /dev/null
++++ examples/example_complete_workflow.py
+@@ -0,0 +1,130 @@
++"""
++A comprehensive example demonstrating the complete workflow of the code engineering process,
++including file selection, prompt generation, code engineering, and version management.
++
++This example shows:
++1. How to select relevant files for a given requirement
++2. How to generate a structured prompt using file information
++3. How to use CodeEngineer to generate and apply code changes
++4. How to manage versions and track changes
++"""
++
++import os
++import sys
++from dotenv import load_dotenv
++
++# Add parent directory to path for imports
++sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from core.ai import AIConfig
++from core.code_engineer import CodeEngineer, CodeEngineerConfig
++from core.diff import Diff
++from core.file_memory import FileMemory
++from core.file_selector import FileSelector
++from core.git_manager import GitManager, GitConfig
++from core.log_manager import LogManager, LogConfig
++from core.prompt_generator import PromptGenerator, PromptData
++from core.version_manager import VersionManager
++
++
++def main():
++    # Load environment variables
++    load_dotenv()
++    
++    # Define project directory and issue ID
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
++    issue_id = 101
++    
++    print(f"Starting complete workflow example with project directory: {project_dir}")
++    print(f"Using issue ID: {issue_id}")
++    
++    # Step 1: Set up initial configurations
++    
++    # Configure AI
++    ai_config = AIConfig(
++        model_name="claude-3.7-sonnet",
++        temperature=0.7,
++        max_tokens=4000
++    )
++    
++    # Configure logging
++    log_config = LogConfig(
++        project_dir=project_dir,
++        issue_id=issue_id
++    )
++    log_manager = LogManager(config=log_config)
++    current_round = log_manager.get_current_round()
++    
++    print(f"Current log round: {current_round}")
++    
++    # Configure Git manager
++    git_config = GitConfig(
++        repo_path=project_dir
++    )
++    git_manager = GitManager(config=git_config)
++    
++    # Step 2: Initialize version manager
++    version_manager = VersionManager(
++        issue_id=issue_id,
++        log_manager=log_manager,
++        git_manager=git_manager,
++        ai_config=ai_config
++    )
++    
++    # Step 3: Define the current requirement
++    current_requirement = """
++    Add a new utility function in the utils directory that processes text files:
++    - Create a function that reads a text file and returns a frequency count of words
++    - Implement filtering options to exclude common words (stopwords)
++    - Add an option to return the results sorted by frequency or alphabetically
++    - Create appropriate unit tests for the functionality
++    """
++    
++    # Step 4: Get version-aware context
++    requirement, history = version_manager.ensure_version_and_generate_context(current_requirement)
++    
++    print("\nProcessed requirement with version context:")
++    print(f"Requirement: {requirement[:100]}...")
++    print(f"History steps: {len(history) if history else 0}")
++    
++    # Step 5: Create and switch to the appropriate branch
++    branch_name = git_manager.get_issues_branch_name(issue_id, current_round)
++    git_manager.switch_branch(branch_name, create=True)
++    
++    print(f"\nSwitched to branch: {branch_name}")
++    
++    # Step 6: Select relevant files
++    file_selector = FileSelector(
++        project_dir=project_dir,
++        issue_id=issue_id,
++        ai_config=ai_config
++    )
++    
++    selected_files = file_selector.select_files_for_requirement_with_log(requirement)
++    print(f"\nSelected {len(selected_files)} relevant files for the requirement")
++    
++    # Step 7: Get file descriptions
++    file_descriptions = FileMemory.get_selected_file_descriptions(project_dir, selected_files)
++    
++    # Step 8: Generate a structured prompt
++    prompt_data = PromptData(
++        requirement=requirement,
++        project_dir=project_dir,
++        steps=history,
++        files=selected_files,
++        file_desc=file_descriptions
++    )
++    
++    user_prompt = PromptGenerator.generatePrompt(prompt_data)
++    
++    # Step 9: Initialize and use CodeEngineer
++    engineer_config = CodeEngineerConfig(project_dir=project_dir, ai_config=ai_config)
++    engineer = CodeEngineer(engineer_config, log_manager, Diff(AIConfig(temperature=0.1, model_name="claude-3.7-sonnet")))
++    
++    print("\nGenerating and applying code changes...")
++    success = engineer.process_prompt(prompt=user_prompt, issue_id=issue_id)
++    
++    # Step 10: Commit changes if successful
++    if success:
++        print("\nCode changes applied successfully, committing changes...")
++        git_manager.commit(f"issues#{issue_id}-Add text file processing utilities")
++        git_manager.push(branch=branch_name, force=True)
++        print(f"\nChanges pushed to branch: {branch_name}")
++    else:
++        print("\nFailed to apply code changes. Check logs for details.")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+Finally, let's create a requirements.txt file to ensure all necessary dependencies are included:
+
+```diff
+--- /dev/null
++++ requirements.txt
+@@ -0,0 +1,8 @@
++python-dotenv>=1.0.0
++openai>=1.0.0
++typing_extensions>=4.5.0
++gitpython>=3.1.30
++pytest>=7.0.0
++dataclasses>=0.6
++anthropic>=0.5.0
++pydantic>=2.0.0
+```
+
+This implementation provides:
+
+1. A focused example (`example_code_engineer.py`) that demonstrates the basic usage of the `CodeEngineer` class
+2. A comprehensive example (`example_complete_workflow.py`) that shows the full workflow including file selection, version management, and Git integration
+3. A README.md file for the examples directory explaining the purpose of each example
+4. A requirements.txt file ensuring all dependencies are specified
+
+The examples are designed to be educational and show how different components of the system work together. They demonstrate typical usage patterns and provide a reference for users who want to understand how to leverage the `CodeEngineer` class for their own code generation needs.
+
+This concludes a fully working implementation.
+
+
+
+# 用户需求
+
+在这个流程上，加入一个初始判断，如果轮次大于1，判断用户此次的问题是否是需要继续修改代码，
+    判断要依赖当前上下文。你应该先通过version_manager获取当前上下文，然后询问AI。如果要写代码，应该执行目前的写代码流程，如果不需要写代码，
+    进入chat流程，流程的具体方法，暂时先不需要实现，先把结构实现好。通过大模型的工具调用来分析用户是否需要修改代码。
+    这个决策环境，作为一个单独的类来实现，放在core目录下。
+    

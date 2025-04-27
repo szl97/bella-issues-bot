@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "bella-issues-bot"
-version = "0.0.1"
+version = "0.1.0"
 description = ""
 authors = [""]
 license = "MIT"
@@ -19,23 +19,27 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-bella-engineer = "0.3.1"
 gitpython = "^3.1.40"
 PyGithub = "^2.1.1"
-langchain = ">=0.2.0,<0.3.0"
-langchain-openai = ">=0.0.5"
-langchain-core = ">=0.2.0,<0.3.0"
-langchain-community = ">=0.2.0,<0.3.0"
+langchain = ">=0.3.0,<0.4.0"
+langchain-openai = ">=0.1.0"
+langchain-core = ">=0.3.0,<0.4.0"
+langchain-community = ">=0.3.0,<0.4.0"
 python-dotenv = "^1.0.0"
-pydantic = "1.10.8"
+pydantic = "^2.5.0"
 openai = "^1.3.5"
 pytest = "^7.4.0"
 pathspec = ">=0.9.0"
 toml = ">=0.10.2"
 typing-extensions = ">=4.0.0"
+jinja2 = ">=3.1.0,<4.0.0"
+colorlog = ">=6.8.0,<7.0.0"
+colorama = ">=0.4.4"
+argparse = ">=1.4.0"
+pyyaml = ">=6.0"
 
 [tool.poetry.scripts]
-bella-issuses-bot = ''
+bella-issues-bot = 'client.terminal:run_workflow_from_terminal'
 
 [tool.ruff]
 select = ["F", "E", "W", "I001"]

@@ -32,7 +32,6 @@ def test_clone_and_pull():
     git_manager.push(force=True)
 
 
-
 def test_real_github_operations():
     load_dotenv()
     """
@@ -133,6 +132,47 @@ def test_add_issue_comment():
             print(f"成功添加评论: {comment_text}")
         except Exception as e:
             assert False, f"添加评论时出错: {str(e)}"
+        
+        # 清理：删除本地仓库
+        git_manager.delete_local_repository(remove_git_config=True)
+
+
+def test_checkout_issue_branch():
+    load_dotenv()
+    """
+    测试切换到指定issue的最新分支
+    
+    注意：此测试需要互联网连接和有效的GitHub访问令牌
+    跳过此测试：pytest -k "not test_checkout_issue_branch"
+    """
+    github_token = os.getenv("GITHUB_TOKEN")
+    repo_url = os.getenv("GIT_REMOTE")
+    
+    # 创建临时目录
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # 创建配置
+        config = GitConfig(
+            repo_path=temp_dir,
+            remote_url=repo_url,
+            auth_token=github_token
+        )
+        
+        # 初始化 GitManager
+        git_manager = GitManager(config)
+        
+        # 测试存在的issue
+        existing_issue_id = 1  # 假设仓库中存在issue #1的分支
+        branch_name = git_manager.checkout_issue_branch(existing_issue_id)
+        print(f"切换到分支: {branch_name}")
+        
+        # 验证是否成功切换
+        current_branch = git_manager.get_current_branch()
+        print(f"当前分支: {current_branch}")
+        
+        # 测试不存在的issue
+        non_existing_issue_id = 99999  # 假设仓库中不存在此issue的分支
+        default_branch = git_manager.checkout_issue_branch(non_existing_issue_id)
+        print(f"切换到默认分支: {default_branch}")
         
         # 清理：删除本地仓库
         git_manager.delete_local_repository(remove_git_config=True)

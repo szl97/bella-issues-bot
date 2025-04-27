@@ -1,0 +1,13 @@
+core/ai.py
+core/chat_processor.py
+core/code_engineer.py
+core/decision_environment.py
+core/diff.py
+core/file_fetcher.py
+core/file_memory.py
+core/file_selector.py
+core/git_manager.py
+core/log_manager.py
+core/prompt_generator.py
+core/version_manager.py
+core/workflow_engine.py
