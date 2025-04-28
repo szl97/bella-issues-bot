@@ -1,0 +1,1945 @@
+# 项目文件描述
+
+
+- core/version_manager.py: 版本管理模块，负责代码生成的版本控制、历史追踪和回退。包含VersionManager类，提供历史轮次提取、格式化历史记录、版本回退分析和执行功能。与GitManager和LogManager交互，为AI助手提供版本回退工具。
+
+- core/git_manager.py: Git操作管理模块，封装仓库操作如克隆、拉取、推送、分支管理等功能。包含GitManager类和GitConfig配置类，支持身份验证、分支切换、提交变更和Issue评论等功能。
+
+- core/log_manager.py: 管理代码生成日志的存储和检索。包含LogManager类，用于存档系统提示词、用户提示词、AI响应等内容，支持按issue和轮次组织日志。提供archive_logs和get_issue_log_entries等方法，记录代码生成过程。
+
+- core/workflow_engine.py: 工作流引擎核心模块，协调各组件完成需求处理。包含WorkflowEngine类，负责初始化AI、Git、日志等管理器，并根据需求类型执行代码生成或聊天流程。支持客户端和机器人两种工作模式。
+
+- examples/example_code_generate.py: 代码生成流程示例，展示如何使用CodeEngineer处理代码修改需求。演示了从需求分析到代码生成和提交的完整流程，包含main函数作为入口点。
+
+- examples/example_workflow.py: WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
+
+- examples/advanced/custom_workflow.py: 自定义工作流处理程序，展示如何将bella-issues-bot集成到自定义应用中。包含preprocess_requirement和postprocess_response两个关键函数，分别用于需求预处理和响应后处理。主程序读取需求文件、进行预处理、调用run_workflow执行工作流，最后进行后处理。
+
+
+# 文件内容
+
+
+
+```
+File: core/version_manager.py
+1 """
+2 版本管理模块，处理代码生成的版本控制、历史追踪和回退功能。
+3 
+4 该模块提供了以下功能:
+5 1. 提取历史轮次的日志信息
+6 2. 格式化历史执行记录用于AI参考
+7 3. 分析用户需求，决定是否需要版本回退
+8 4. 执行Git版本回退操作
+9 5. 为AI助手提供版本回退工具
+10 """
+11 
+12 import os
+13 from dataclasses import dataclass
+14 from typing import List, Tuple, Optional
+15 
+16 from langchain_core.tools import Tool, StructuredTool
+17 from pydantic import BaseModel, Field
+18 
+19 from core.ai import AIConfig, AIAssistant
+20 from core.git_manager import GitManager
+21 from core.log_config import get_logger
+22 from core.log_manager import LogManager
+23 from core.prompt_generator import PromptGenerator
+24 
+25 logger = get_logger(__name__)
+26 
+27 @dataclass
+28 class VersionInfo:
+29     """存储特定版本的信息"""
+30     issue_id: int
+31     round_num: int
+32     requirement: str
+33     agent_response: str
+34     modified_files: List[str] = None
+35 
+36 
+37 class VersionManager:
+38     """管理代码生成的版本信息，支持版本回退和需求整合"""
+39 
+40     def __init__(self, issue_id: int, ai_config: AIConfig, log_manager: LogManager, git_manager: GitManager, file_memory=None):
+41         """
+42         初始化版本管理器
+43         
+44         Args:
+45             issue_id: GitHub issue编号
+46             ai_config: AI配置
+47             log_manager: 日志管理器实例 
+48             git_manager: Git管理器实例
+49             file_memory: 文件内存管理器实例(可选)
+50         """
+51         self.ai_assistant = AIAssistant(config=ai_config, tools=[self._create_version_manager_tool()])
+52         self.file_memory = file_memory
+53         self.log_manager = log_manager
+54         self.git_manager = git_manager
+55         self.current_issue_id = issue_id
+56         self.current_round_num = log_manager.get_current_round()
+57 
+58     def ensure_version_and_generate_context(self, original_requirement: str) -> tuple[str, str]:
+59         requirement = None
+60         if self.current_round_num > 1 :
+61             rollback, rollback_num, requirement, reasoning = self._analyze_rollback_need(original_requirement)
+62         requirement = original_requirement if requirement is None else requirement
+63         history = self.get_formatted_history()
+64         return requirement, history
+65 
+66     
+67     def _extract_history(self) -> List[VersionInfo]:
+68         """
+69         提取当前issue的历史版本信息
+70             
+71         Returns:
+72             List[VersionInfo]: 历史版本信息列表
+73         """
+74         # 获取所有轮次的日志条目
+75         log_entries = self.log_manager.get_issue_log_entries()
+76         
+77         # 提取每轮的需求和响应
+78         version_info_list = []
+79         for entry in log_entries:
+80             try:
+81                 # 从用户提示中提取需求
+82                 extracted_info = PromptGenerator.extractInfo(entry.prompt)
+83                 requirement = extracted_info.requirement
+84                 
+85                 # 创建版本信息
+86                 version_info = VersionInfo(
+87                     issue_id=self.current_issue_id,
+88                     round_num=entry.round_num,
+89                     requirement=requirement,
+90                     agent_response=entry.response,
+91                     modified_files=entry.modified_files
+92                 )
+93                 version_info_list.append(version_info)
+94                 
+95             except Exception as e:
+96                 logger.error(f"提取轮次 {entry.round_num} 的信息时出错: {str(e)}")
+97         
+98         return version_info_list
+99 
+100     def get_formatted_history(self) -> str:
+101         """
+102         获取格式化的历史执行记录
+103         
+104         Args:
+105             
+106         Returns:
+107             str: 格式化的历史执行记录
+108         """
+109         history = self._extract_history()
+110         formatted_history = []
+111         
+112         for version in history:
+113             formatted_history.append(f"【round_{version.round_num}】")
+114             formatted_history.append(f"requirement: \n{version.requirement}")
+115             
+116             # 简化AI响应，避免历史记录过长
+117             formatted_history.append(f"agent_response: \n{version.agent_response}")
+118             formatted_history.append("")  # 添加空行分隔
+119         return "\n".join(formatted_history)
+120 
+121     def _analyze_rollback_need(self,
+122                               current_requirement: str) -> Tuple[bool, Optional[int], Optional[str], Optional[str]]:
+123         """
+124         分析是否需要版本回退
+125         
+126         Args:
+127             current_requirement: 当前用户需求
+128             
+129         Returns:
+130             Tuple[bool, int, str, str]: (是否需要回退, 回退到的轮次, 整合后的需求，决策的原因)
+131         """
+132         # 获取历史记录
+133         history = self.get_formatted_history()
+134         
+135         # 构建提示词
+136         prompt = f"""
+137 # 角色
+138 你是一位资深程序员，现在在处理用户的issues，请分析本次用户提出的需求和历史执行记录，判断之前提交的代码是否需要版本回退。并调用工具完成版本的创建。
+139 
+140 #注意
+141 需要重置的轮次如果就是上一个轮次，那么就是不需要回退。
+142 
+143 ##需求回退的情况举例
+144 - 最后一个round是5，假如你认为round4和round5的改动极其不符合，会影响用户需求的实现，那么就需要回滚4和5，此次的需求基于round3修改，target_round为1
+145 - 最后一个round是4，假如你认为之前的所有修改都极其不符合用户需求或错误，重新改更有利，那么用户此次的需求应该基于原始代码修改，那么就需要回滚所有改动，target_round为0
+146 
+147 ##不需要回滚的情况举例
+148 - 最后一个round是5，假如你认为用户的此次需求，在round5的代码上改动即可，那么就可以不回滚，直接修改
+149 
+150 # 历史执行记录
+151 {history}
+152 
+153 # 当前用户需求
+154 {current_requirement}
+155 
+156 
+157 #执行步骤
+158 ##工具参数分析
+159 你需要调用 version_manager 工具来处理问题，请请根据上述信息分析以下问题，
+160 1. 是否需要回退到某个特定版本? 如果需要，则调用工具时的参数 need_rollback 为 True
+161 2. 如果需要回退，应该回退到哪个round?  调用工具时的参数，大于等于0，如果全部回滚则设置为0
+162 3. 如果需要回退，当前需求的信息是否完整？需要把回退到的round之后的round需求与当前需求结合，作为补充信息吗? 如果需要结合，则将重写后的本轮需求，作为integrated_requirement参数；如果不需要则不需要此参数。
+163 4. 做出这个决策的原因是什么？调用工具时，作为reasoning参数
+164 
+165 ##工具执行
+166 根据得到的参数，调用version_manager。无论是否需要rollback必须调用工具执行任务，完成当前版本的创建。
+167 
+168 """
+169 
+170         # 发送给AI进行分析
+171         response = self.ai_assistant.generate_response(prompt, use_tools=True)
+172 
+173         return response if response else (False, 0, current_requirement)
+174 
+175     def _rollback_to_version(self, target_round: int) -> bool:
+176         """
+177         执行基于文件的版本回退
+178         
+179         Args:
+180             target_round: 目标轮次
+181             
+182         Returns:
+183             bool: 回退是否成功
+184         """
+185         try:
+186             # 获取目标轮次的日志条目
+187             log_entries = self.log_manager.get_issue_log_entries(include_diff=True)
+188             
+189             if not log_entries:
+190                 logger.error("找不到任何日志条目")
+191                 return False
+192             
+193             # 获取当前轮次到目标轮次之间的所有轮次记录，按轮次降序排列（从最新到最旧）
+194             entries_to_rollback = sorted(
+195                 [entry for entry in log_entries if entry.round_num > target_round],
+196                 key=lambda entry: entry.round_num,
+197                 reverse=True
+198             )
+199             
+200             if not entries_to_rollback:
+201                 logger.info(f"当前已经是轮次 {target_round} 或更早，无需回滚")
+202                 return True
+203             
+204             # 依次回滚每一轮的修改
+205             import os
+206             project_dir = self.log_manager.config.project_dir
+207             
+208             for entry in entries_to_rollback:
+209                 logger.info(f"正在回滚轮次 {entry.round_num} 的修改...")
+210                 
+211                 if not entry.modified_files:
+212                     logger.info(f"轮次 {entry.round_num} 没有文件修改，跳过")
+213                     continue
+214                 
+215                 # 对每个修改的文件进行回滚
+216                 for diff_info in entry.modified_files:
+217                     file_path = os.path.join(project_dir, diff_info.file_name)
+218                     
+219                     if diff_info.is_create:
+220                         # 如果是创建操作，则删除该文件
+221                         if os.path.exists(file_path):
+222                             os.remove(file_path)
+223                             logger.info(f"删除文件 {diff_info.file_name}，回滚轮次 {entry.round_num} 的创建操作")
+224                     
+225                     elif diff_info.is_modify:
+226                         # 如果是修改操作，则恢复到修改前的内容
+227                         if diff_info.file_content is not None:
+228                             os.makedirs(os.path.dirname(file_path), exist_ok=True)
+229                             with open(file_path, "w", encoding="utf-8") as f:
+230                                 f.write(diff_info.file_content)
+231                             logger.info(f"恢复文件 {diff_info.file_name} 到轮次 {entry.round_num} 修改前的状态")
+232                         else:
+233                             logger.warning(f"文件 {diff_info.file_name} 没有保存修改前的内容，无法回滚")
+234                     
+235                     elif diff_info.is_delete:
+236                         # 如果是删除操作，则恢复文件
+237                         if diff_info.file_content is not None:
+238                             os.makedirs(os.path.dirname(file_path), exist_ok=True)
+239                             with open(file_path, "w", encoding="utf-8") as f:
+240                                 f.write(diff_info.file_content)
+241                             logger.info(f"恢复文件 {diff_info.file_name}，回滚轮次 {entry.round_num} 的删除操作")
+242                         else:
+243                             logger.warning(f"文件 {diff_info.file_name} 没有保存删除前的内容，无法回滚")
+244 
+245             self.log_manager.rollback_logs(target_round)
+246             logger.info(f"成功回滚到轮次 {target_round}")
+247             return True
+248             
+249         except Exception as e:
+250             logger.error(f"文件版本回退失败: {str(e)}")
+251             return False
+252 
+253     def _rollback_to_version_git(self, target_round: int) -> bool:
+254         """
+255         执行版本回退
+256         
+257         Args:
+258             target_round: 目标轮次
+259             
+260         Returns:
+261             bool: 回退是否成功
+262         """
+263         try:
+264             # 构建目标分支名
+265             target_branch = f"bella-bot-issues-{self.current_issue_id}-{target_round}"
+266             return self.git_manager.reset_to(target_branch)
+267             
+268         except Exception as e:
+269             logger.error(f"Git版本回退失败: {str(e)}")
+270             return False
+271 
+272     class _VersionManagerToolSchema(BaseModel):
+273         need_rollback: bool = Field(
+274             ...,
+275             examples=[True, False],
+276             description="是否需要回退版本"
+277         )
+278         target_round: Optional[int] = Field(
+279             None,
+280             examples=[0,1,2,3,4],
+281             description="要回滚到的目标轮次，只有need_rollback为True时需要且必须.0代表需要全部回滚。"
+282         )
+283         integrated_requirement: Optional[str] = Field(
+284             None,
+285             description="整合后的需求，只有need_rollback为True且需要重写需求时需要"
+286         )
+287         reasoning: Optional[str] = Field(
+288             None,
+289             description="做这个出决策的原因"
+290         )
+291 
+292     def _create_version_manager_tool(self) -> StructuredTool:
+293         """
+294         版本管理工具，供AI助手使用
+295             
+296         Returns:
+297             Tool: 版本管理工具
+298         """
+299         def version_manager_tool(need_rollback: bool,
+300                                           target_round: Optional[int] = None,
+301                                           integrated_requirement: Optional[str] = None,
+302                                           reasoning: Optional[str] = None) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
+303             """
+304             决定是否回退版本并执行回退
+305             
+306             Args:
+307                 need_rollback:是否需要回退,
+308                 target_round：回退到的轮次,
+309                 integrated_requirement： 整合后的需求
+310                 reasoning: 做出决策的原因
+311                 
+312             Returns:
+313                 str: 执行结果
+314             """
+315             
+316             if need_rollback and target_round is not None:
+317                 success = self._rollback_to_version(target_round)
+318                 if(success) :
+319                     return (True, target_round, integrated_requirement, reasoning)
+320                 else:
+321                     logger.warning(f"版本回退失败:issues:{self.current_issue_id},target:{target_round},integrated_requirement:{integrated_requirement}")
+322             return (False, 0, None, reasoning)
+323         
+324         return StructuredTool.from_function(
+325             name="version_rollback_manager",
+326             description="用于决定当前项目版本的工具，如果 need_rollback 为True，则根据target_round和integrated_requirement进行版本回退；如果need_rollback为False则保持当前版本",
+327             func=version_manager_tool,
+328             return_direct=True,
+329             args_schema=self._VersionManagerToolSchema
+330         )
+331
+```
+
+
+
+
+```
+File: core/git_manager.py
+1 import os
+2 import shutil
+3 from dataclasses import dataclass
+4 from typing import Optional, List
+5 from urllib.parse import urlparse, urlunparse
+6 
+7 import git
+8 
+9 from core.log_config import get_logger
+10 
+11 logger = get_logger(__name__)
+12 
+13 
+14 @dataclass
+15 class GitConfig:
+16     """Git configuration parameters"""
+17 
+18     repo_path: str
+19     remote_name: str = "origin"
+20     default_branch: str = "main"
+21     remote_url: Optional[str] = os.getenv("GIT_REMOTE")
+22     auth_token: Optional[str] = os.getenv("GITHUB_TOKEN")
+23 
+24 
+25 class GitManager:
+26     """Manages git operations including push, pull, branch creation and switching"""
+27 
+28     def __init__(self, config: GitConfig):
+29         """Initialize GitManager with configuration"""
+30         self.config = config
+31         self.repo = None
+32         self._ensure_repo()
+33 
+34     def _ensure_repo(self) -> None:
+35         """Ensure git repository exists and is properly initialized"""
+36         if not os.path.exists(self.config.repo_path) or len(os.listdir(self.config.repo_path)) == 0:
+37             if self.config.remote_url:
+38                 self.clone()
+39             else:
+40                 raise ValueError(
+41                     f"Repository path does not exist: {self.config.repo_path}"
+42                 )
+43         else:
+44             try:
+45                 self.repo = git.Repo(self.config.repo_path)
+46                 # Set auth token for remote operations if provided
+47                 if self.config.auth_token and self.config.remote_url:
+48                     self._set_remote_with_auth()
+49             except git.InvalidGitRepositoryError:
+50                 raise ValueError(
+51                     f"Invalid git repository at: {self.config.repo_path}"
+52                 )
+53 
+54 
+55 
+56     def _get_url_with_token(self, url: str) -> str:
+57         """
+58         Insert authentication token into git URL
+59 
+60         Args:
+61             url: Original git URL
+62 
+63         Returns:
+64             URL with authentication token
+65         """
+66         if not self.config.auth_token:
+67             return url
+68 
+69         parsed = urlparse(url)
+70 
+71         # Handle different URL formats
+72         if parsed.scheme in ["http", "https"]:
+73             netloc = f"{self.config.auth_token}@{parsed.netloc}"
+74             return urlunparse(
+75                 (
+76                     parsed.scheme,
+77                     netloc,
+78                     parsed.path,
+79                     parsed.params,
+80                     parsed.query,
+81                     parsed.fragment,
+82                 )
+83             )
+84         elif "@" in url and ":" in url and url.startswith("git@"):  # Handle SSH format: git@github.com:username/repo.git
+85             return url  # Don't modify SSH URLs
+86         else:
+87             return url  # Return original if format is not recognized
+88 
+89     def _set_remote_with_auth(self) -> None:
+90         """Configure remote with authentication token"""
+91         if not self.repo or not self.config.auth_token or not self.config.remote_url:
+92             return
+93 
+94         try:
+95             # Get current remotes
+96             remotes = list(self.repo.remotes)
+97             remote_exists = any(
+98                 remote.name == self.config.remote_name for remote in remotes
+99             )
+100 
+101             # Prepare URL with token
+102             url_with_token = self._get_url_with_token(self.config.remote_url)
+103 
+104             # Set or update remote
+105             if remote_exists:
+106                 self.repo.git.remote("set-url", self.config.remote_name, url_with_token)
+107             else:
+108                 self.repo.git.remote("add", self.config.remote_name, url_with_token)
+109 
+110             logger.info(
+111                 f"Configured remote '{self.config.remote_name}' with authentication"
+112             )
+113         except git.GitCommandError as e:
+114             logger.error(f"Failed to configure remote with authentication: {str(e)}")
+115             raise
+116 
+117     def clone(self) -> None:
+118         """
+119         Clone the repository specified in config
+120 
+121         Raises:
+122             ValueError: If remote_url is not set in config
+123             git.GitCommandError: If clone operation fails
+124         """
+125         if not self.config.remote_url:
+126             raise ValueError("Remote URL must be set to clone a repository")
+127 
+128         self._clone_repo(branch=self.config.default_branch)
+129 
+130     def _clone_repo(self, branch: Optional[str] = None) -> None:
+131         """
+132         Internal method to perform the clone operation
+133 
+134         Args:
+135             branch: Branch to checkout after cloning
+136         """
+137         try:
+138             # Prepare parent directory if it doesn't exist
+139             parent_dir = os.path.dirname(self.config.repo_path)
+140             if parent_dir and not os.path.exists(parent_dir):
+141                 os.makedirs(parent_dir)
+142 
+143             # Remove target directory if it exists
+144             if os.path.exists(self.config.repo_path):
+145                 shutil.rmtree(self.config.repo_path)
+146 
+147             # Prepare URL with token if provided
+148             clone_url = self._get_url_with_token(self.config.remote_url)
+149 
+150             # Clone options
+151             clone_args = {
+152                 "url": clone_url,
+153                 "to_path": self.config.repo_path,
+154             }
+155 
+156             # Add branch if specified
+157             if branch:
+158                 clone_args["branch"] = branch
+159 
+160             # Clone the repository
+161             self.repo = git.Repo.clone_from(**clone_args)
+162 
+163             logger.info(f"Successfully cloned repository to {self.config.repo_path}")
+164 
+165             # Configure remote with auth token if provided
+166             if self.config.auth_token:
+167                 self._set_remote_with_auth()
+168 
+169         except git.GitCommandError as e:
+170             logger.error(f"Failed to clone repository: {str(e)}")
+171             # Clean up if clone failed
+172             if os.path.exists(self.config.repo_path):
+173                 shutil.rmtree(self.config.repo_path)
+174             raise
+175 
+176     def pull(self, branch: Optional[str] = None) -> None:
+177         """
+178         Pull changes from remote repository
+179 
+180         Args:
+181             branch: Branch to pull from. If None, pulls current branch
+182         """
+183         try:
+184             if branch:
+185                 self.repo.git.pull(self.config.remote_name, branch)
+186             else:
+187                 self.repo.git.pull()
+188             logger.info(
+189                 f"Successfully pulled changes from {branch or 'current branch'}"
+190             )
+191         except git.GitCommandError as e:
+192             logger.error(f"Failed to pull changes: {str(e)}")
+193             raise
+194 
+195     def push(
+196         self,
+197         branch: Optional[str] = None,
+198         force: bool = False,
+199         set_upstream: bool = True,
+200     ) -> None:
+201         """
+202         Push changes to remote repository
+203 
+204         Args:
+205             branch: Branch to push. If None, pushes current branch
+206             force: Whether to force push
+207             set_upstream: Whether to set upstream branch if it doesn't exist
+208         """
+209         try:
+210             # 确保远程 URL 包含认证令牌
+211             if self.config.auth_token:
+212                 self._set_remote_with_auth()
+213 
+214             # 如果没有指定分支，获取当前分支
+215             current_branch = branch or self.get_current_branch()
+216 
+217             # 执行推送操作
+218             if force:
+219                 if set_upstream:
+220                     self.repo.git.push(
+221                         "-f", "--set-upstream", self.config.remote_name, current_branch
+222                     )
+223                 else:
+224                     if branch:
+225                         self.repo.git.push("-f", self.config.remote_name, branch)
+226                     else:
+227                         self.repo.git.push("-f")
+228             else:
+229                 if set_upstream:
+230                     self.repo.git.push(
+231                         "--set-upstream", self.config.remote_name, current_branch
+232                     )
+233                 else:
+234                     if branch:
+235                         self.repo.git.push(self.config.remote_name, branch)
+236                     else:
+237                         self.repo.git.push()
+238 
+239             logger.info(f"Successfully pushed changes to {current_branch}")
+240         except git.GitCommandError as e:
+241             logger.error(f"Failed to push changes: {str(e)}")
+242             raise
+243 
+244     def create_branch(
+245         self, branch_name: str, start_point: Optional[str] = None
+246     ) -> None:
+247         """
+248         Create a new branch
+249 
+250         Args:
+251             branch_name: Name of the new branch
+252             start_point: Branch/commit to create branch from. If None, uses current HEAD
+253         """
+254         try:
+255             if start_point:
+256                 self.repo.git.branch(branch_name, start_point)
+257             else:
+258                 self.repo.git.branch(branch_name)
+259             logger.info(f"Successfully created branch: {branch_name}")
+260         except git.GitCommandError as e:
+261             logger.error(f"Failed to create branch: {str(e)}")
+262             raise
+263 
+264     def switch_branch(self, branch_name: str, create: bool = False) -> None:
+265         """
+266         Switch to specified branch
+267 
+268         Args:
+269             branch_name: Name of the branch to switch to
+270             create: Create branch if it doesn't exist
+271         """
+272         try:
+273             if create:
+274                 try:
+275                     self.repo.git.checkout("-b", branch_name)
+276                 except:
+277                     self.repo.git.checkout(branch_name)
+278             else:
+279                 self.repo.git.checkout(branch_name)
+280             logger.info(f"Successfully switched to branch: {branch_name}")
+281         except git.GitCommandError as e:
+282             logger.error(f"Failed to switch branch: {str(e)}")
+283             raise
+284 
+285     def delete_branch(self, branch_name: str, force: bool = False) -> None:
+286         """
+287         Delete specified branch
+288 
+289         Args:
+290             branch_name: Name of the branch to delete
+291             force: Force delete even if branch not fully merged
+292         """
+293         try:
+294             if force:
+295                 self.repo.git.branch("-D", branch_name)
+296             else:
+297                 self.repo.git.branch("-d", branch_name)
+298             logger.info(f"Successfully deleted branch: {branch_name}")
+299         except git.GitCommandError as e:
+300             logger.error(f"Failed to delete branch: {str(e)}")
+301             raise
+302 
+303     def get_current_branch(self) -> str:
+304         """Get name of current branch"""
+305         return self.repo.active_branch.name
+306 
+307     def list_branches(self, remote: bool = False) -> List[str]:
+308         """
+309         List all branches
+310 
+311         Args:
+312             remote: Whether to list remote branches instead of local
+313 
+314         Returns:
+315             List of branch names
+316         """
+317         if remote:
+318             return [ref.name for ref in self.repo.remote().refs]
+319         return [branch.name for branch in self.repo.heads]
+320 
+321     def get_current_commit_id(self) -> str:
+322         """获取当前提交的 ID"""
+323         try:
+324             return self.repo.head.commit.hexsha
+325         except Exception as e:
+326             logger.error(f"获取当前提交 ID 失败: {str(e)}")
+327             return ""
+328 
+329     def get_changed_files(self, old_commit: str, new_commit: str) -> List[str]:
+330         """
+331         获取两个提交之间变更的文件列表
+332 
+333         Args:
+334             old_commit: 旧提交的 ID
+335             new_commit: 新提交的 ID
+336 
+337         Returns:
+338             变更的文件路径列表
+339         """
+340         try:
+341             # 获取提交对象
+342             old = self.repo.commit(old_commit)
+343             new = self.repo.commit(new_commit)
+344 
+345             # 获取差异
+346             diff_index = old.diff(new)
+347 
+348             # 收集所有变更的文件
+349             changed_files = set()
+350 
+351             # 添加修改的文件
+352             for diff in diff_index.iter_change_type("M"):
+353                 if not self.is_ignore(diff.a_path):
+354                     changed_files.add(diff.a_path)
+355 
+356             # 添加增加的文件
+357             for diff in diff_index.iter_change_type("A"):
+358                 if not self.is_ignore(diff.b_path):
+359                     changed_files.add(diff.b_path)
+360 
+361             # 添加删除的文件
+362             for diff in diff_index.iter_change_type("D"):
+363                 if not self.is_ignore(diff.b_path):
+364                     changed_files.add(diff.a_path)
+365 
+366             return list(changed_files)
+367         except Exception as e:
+368             logger.error(f"获取变更文件列表失败: {str(e)}")
+369             return []
+370 
+371     def is_ignore(self, path: str) -> bool:
+372         # 检查文件名是否以点开头
+373         file_name = os.path.basename(path)
+374         if file_name.startswith("."):
+375             return True
+376         # 检查路径中是否包含以点开头的目录
+377         path_parts = path.split(os.path.sep)
+378         for part in path_parts:
+379             # 跳过空字符串（可能出现在路径开头）
+380             if not part:
+381                 continue
+382             # 如果目录名以点开头，则忽略
+383             if part.startswith("."):
+384                 return True
+385 
+386         # 如果不满足任何忽略条件，则不忽略
+387         return False
+388 
+389     def delete_local_repository(self, remove_git_config: bool = False) -> None:
+390         """
+391         删除本地代码仓库和可选的全局 git 配置
+392 
+393         Args:
+394             remove_git_config: 是否同时删除与此仓库相关的全局 git 配置
+395 
+396         Raises:
+397             ValueError: 如果仓库路径不存在
+398             OSError: 如果删除操作失败
+399         """
+400         if not os.path.exists(self.config.repo_path):
+401             logger.warning(f"仓库路径不存在，无需删除: {self.config.repo_path}")
+402             return
+403 
+404         try:
+405             # 关闭仓库连接以释放文件锁
+406             if self.repo:
+407                 self.repo.close()
+408                 self.repo = None
+409 
+410             # 删除本地仓库目录
+411             shutil.rmtree(self.config.repo_path)
+412             logger.info(f"成功删除本地仓库: {self.config.repo_path}")
+413 
+414             # 可选：删除全局 git 配置中与此仓库相关的条目
+415             if remove_git_config:
+416                 self._remove_git_config()
+417 
+418         except (OSError, shutil.Error) as e:
+419             logger.error(f"删除本地仓库失败: {str(e)}")
+420             raise
+421 
+422     def _remove_git_config(self) -> None:
+423         """
+424         从全局 git 配置中删除与当前仓库相关的配置
+425 
+426         这包括：
+427         - 与远程仓库 URL 相关的凭证
+428         - 特定于此仓库的用户配置
+429         """
+430         try:
+431             # 获取仓库的规范路径
+432             repo_path = os.path.abspath(self.config.repo_path)
+433             repo_name = os.path.basename(repo_path)
+434 
+435             # 尝试从 git 配置中删除与此仓库相关的条目
+436             if self.config.remote_url:
+437                 # 解析远程 URL 以获取主机名
+438                 parsed = urlparse(self.config.remote_url)
+439                 if parsed.netloc:
+440                     # 尝试删除凭证
+441                     try:
+442                         git.cmd.Git().execute(
+443                             ["git", "credential", "reject"],
+444                             input=f"url={self.config.remote_url}\n\n",
+445                         )
+446                         logger.info(f"已尝试从凭证存储中删除 {parsed.netloc} 的凭证")
+447                     except git.GitCommandError:
+448                         logger.debug("凭证删除操作未成功，可能没有存储凭证")
+449 
+450             # 尝试删除仓库特定的配置（如果有）
+451             try:
+452                 git.cmd.Git().execute(
+453                     [
+454                         "git",
+455                         "config",
+456                         "--global",
+457                         "--remove-section",
+458                         f"remote.{repo_name}",
+459                     ]
+460                 )
+461                 logger.info(f"已删除全局 git 配置中的 remote.{repo_name} 部分")
+462             except git.GitCommandError:
+463                 logger.debug(f"全局配置中没有 remote.{repo_name} 部分")
+464 
+465             logger.info("已完成 git 配置清理")
+466 
+467         except Exception as e:
+468             logger.warning(f"清理 git 配置时出错: {str(e)}")
+469             # 不抛出异常，因为这是次要操作
+470 
+471     def add_issue_comment(self, issue_number: int, comment_text: str) -> bool:
+472         """
+473         在 GitHub 仓库的指定 Issue 下添加评论
+474 
+475         Args:
+476             issue_number: Issue 编号
+477             comment_text: 评论内容
+478 
+479         Returns:
+480             bool: 操作是否成功
+481 
+482         Raises:
+483             ValueError: 如果未配置认证令牌或远程 URL
+484             Exception: 如果添加评论过程中发生其他错误
+485         """
+486         try:
+487             # 检查必要的配置
+488             if not self.config.auth_token:
+489                 raise ValueError("添加 Issue 评论需要认证令牌 (auth_token)")
+490 
+491             if not self.config.remote_url:
+492                 raise ValueError("添加 Issue 评论需要远程仓库 URL (remote_url)")
+493 
+494             # 导入 PyGithub
+495             try:
+496                 from github import Github
+497             except ImportError:
+498                 raise ImportError("添加 Issue 评论需要安装 PyGithub 库: pip install PyGithub")
+499 
+500             # 解析仓库所有者和名称
+501             parsed_url = urlparse(self.config.remote_url)
+502             path_parts = parsed_url.path.strip("/").split("/")
+503 
+504             if len(path_parts) < 2 or not all(path_parts[:2]):
+505                 raise ValueError(f"无法从 URL 解析仓库所有者和名称: {self.config.remote_url}")
+506 
+507             owner = path_parts[0]
+508             repo_name = path_parts[1]
+509             if repo_name.endswith(".git"):
+510                 repo_name = repo_name[:-4]  # 移除 .git 后缀
+511 
+512             # 初始化 GitHub 客户端
+513             g = Github(self.config.auth_token)
+514 
+515             # 获取仓库和 Issue
+516             repo = g.get_repo(f"{owner}/{repo_name}")
+517             issue = repo.get_issue(issue_number)
+518 
+519             # 添加评论
+520             comment = issue.create_comment(f"bella-issues-bot已处理：\n{comment_text}")
+521 
+522             logger.info(f"成功在 Issue #{issue_number} 下添加评论 (ID: {comment.id})")
+523             return True
+524 
+525         except Exception as e:
+526             logger.error(f"添加 Issue 评论失败: {str(e)}")
+527             raise
+528 
+529     def commit(
+530         self, message: str, add_all: bool = True, files: Optional[List[str]] = None
+531     ) -> str:
+532         """
+533         创建一个新的提交
+534 
+535         Args:
+536             message: 提交信息
+537             add_all: 是否添加所有变更的文件，默认为 True
+538             files: 要添加的特定文件列表，如果 add_all 为 True 则忽略此参数
+539 
+540         Returns:
+541             str: 新提交的 SHA 哈希值
+542 
+543         Raises:
+544             git.GitCommandError: 如果 Git 操作失败
+545         """
+546         try:
+547             # 添加文件到暂存区
+548             if add_all:
+549                 self.repo.git.add(A=True)
+550             elif files:
+551                 for file in files:
+552                     self.repo.git.add(file)
+553 
+554             # 创建提交
+555             commit = self.repo.index.commit(message)
+556             logger.info(f"成功创建提交: {commit.hexsha[:7]} - {message}")
+557 
+558             return commit.hexsha
+559         except git.GitCommandError as e:
+560             logger.error(f"创建提交失败: {str(e)}")
+561             raise
+562 
+563     def reset_to(self, target_branch: str) -> bool:
+564         """
+565         将当前分支重置到远程目标分支的状态
+566 
+567         Args:
+568             target_branch: 目标分支名称
+569 
+570         Returns:
+571             bool: 操作是否成功
+572         """
+573         try:
+574             # 获取远程分支
+575             remote_name = self.config.remote_name
+576             remote_branches = self.list_branches(remote=True)
+577             remote_target = f"{remote_name}/{target_branch}"
+578             # 检查目标分支是否存在于远端
+579             if remote_target not in remote_branches:
+580                 logger.warning(f"目标分支 {remote_target} 不存在于远端")
+581                 return False
+582 
+583             # 切换到目标分支，如果不存在则创建
+584             logger.info(f"切换到分支: {target_branch}")
+585             self.switch_branch(target_branch, create=True)
+586 
+587             # 拉取最新代码
+588             logger.info(f"拉取远程分支: {remote_target} 的最新代码")
+589             self.pull(target_branch)
+590 
+591             # 强制重置到远程分支状态
+592             logger.info(f"重置到远程分支: {remote_target}")
+593             self.repo.git.reset(f"{remote_target}", hard=True)
+594 
+595             logger.info(f"成功重置到版本: {target_branch}")
+596             return True
+597         except git.GitCommandError as e:
+598             logger.error(f"重置到分支 {target_branch} 失败: {str(e)}")
+599             return False
+600         except Exception as e:
+601             logger.error(f"重置过程中发生未知错误: {str(e)}")
+602             return False
+603 
+604     def reset_to_issue_branch(self, issue_id: int) -> str:
+605         """
+606         拉取指定issue对应的最新分支并切换到该分支
+607         如果该issue还未创建过分支，则切换到默认分支
+608 
+609         Args:
+610             issue_id: Issue编号
+611 
+612         Returns:
+613             str: 成功切换到的分支名称
+614 
+615         Raises:
+616             git.GitCommandError: 如果Git操作失败
+617         """
+618         try:
+619             # 确保远程仓库信息是最新的
+620             self.repo.git.fetch(self.config.remote_name)
+621             logger.info(f"成功获取远程仓库信息")
+622             
+623             # 获取所有远程分支
+624             remote_branches = self.repo.git.branch("-r").splitlines()
+625             remote_branches = [branch.strip() for branch in remote_branches]
+626             
+627             # 查找与指定issue相关的分支
+628             issue_branch_name = f"bella-issues-bot-{issue_id}"
+629             remote_issue_branch = f"{self.config.remote_name}/{issue_branch_name}"
+630             
+631             branch_exists = False
+632             for branch in remote_branches:
+633                 if remote_issue_branch in branch:
+634                     branch_exists = True
+635                     break
+636 
+637             if branch_exists:
+638                 # 切换到issue分支
+639                 self.switch_branch(issue_branch_name, create=True)
+640                 self.pull()
+641             else:
+642                 self.pull()
+643                 self.switch_branch(issue_branch_name, create=True)
+644             logger.info(f"成功切换到issue #{issue_id}的分支: {issue_branch_name}")
+645             
+646             return issue_branch_name
+647         except git.GitCommandError as e:
+648             logger.error(f"切换到issue分支时出错: {str(e)}")
+649             raise
+650
+```
+
+
+
+
+```
+File: core/log_manager.py
+1 import datetime
+2 import os
+3 import json
+4 import shutil
+5 from dataclasses import dataclass, field
+6 from typing import List, Optional
+7 from pydantic import BaseModel
+8 
+9 from core.diff import DiffInfo
+10 from core.log_config import get_logger
+11 
+12 logger = get_logger(__name__)
+13 
+14 @dataclass
+15 class LogConfig:
+16     """日志管理配置"""
+17 
+18     project_dir: str
+19     issue_id: int
+20     mode: str = "client" # ["client", "bot"]
+21 
+22 
+23 class LogEntry(BaseModel):
+24     """存储单次代码生成日志的数据类"""
+25     issue_id: int
+26     round_num: int
+27     sys_prompt: str
+28     prompt: str
+29     response: str
+30     timestamp: str = datetime.datetime.now().isoformat()
+31     log_path: str = ""
+32     modified_files: List[DiffInfo] = []
+33 
+34 
+35 class LogManager:
+36     """管理代码生成日志的存档和检索"""
+37     base_dir: str = ".eng"
+38     logs_base_dir: str = "memory"
+39     rollback_dir: str = "rollback"
+40 
+41     def __init__(self, config: LogConfig):
+42         """
+43         初始化日志管理器
+44 
+45         Args:
+46             config: LogConfig实例，包含必要的配置信息
+47         """
+48         self.config = config
+49         self.issue_id = self.config.issue_id
+50 
+51         
+52         # 根据模式选择存储目录
+53         if self.config.mode == "bot":
+54             logs_dir = "issues"
+55         else:
+56             logs_dir = "queries"
+57             
+58         # 构建完整的日志存储路径
+59         self.logs_path = os.path.join(
+60             self.config.project_dir, 
+61             self.base_dir,
+62             self.logs_base_dir,
+63             logs_dir)
+64         self.issues_path = os.path.join(
+65             self.logs_path, "#" + str(self.issue_id)
+66         )
+67 
+68         self.rollback_path = os.path.join(
+69             self.logs_path, "#" + str(self.issue_id), self.rollback_dir
+70         )
+71 
+72         # 初始化当前轮次
+73         self.current_round = self._get_next_round()
+74 
+75         # 确保必要的目录存在
+76         os.makedirs(self.issues_path, exist_ok=True)
+77         os.makedirs(self.rollback_path, exist_ok=True)
+78 
+79         # 定义日志文件名常量
+80         self.SYS_PROMPT_FILE = "system_prompt.txt"
+81         self.USER_PROMPT_FILE = "user_prompt.txt"
+82         self.AI_RESPONSE_FILE = "ai_response.txt"
+83         self.TIMESTAMP_FILE = "timestamp.txt"
+84         self.MODIFIED_FILES_FILE = "modified_files.txt"
+85 
+86     def archive_logs(self, sys_prompt: str, prompt: str, response: str, diff_infos: List[DiffInfo] = None) -> str:
+87         """
+88         将代码生成日志存档到指定的目录
+89 
+90         Args:
+91             diff_infos: 文件的修改信息
+92             sys_prompt: 系统提示词
+93             prompt: 用户提示词
+94             response: AI响应
+95 
+96         Returns:
+97             str: 存档目录的路径
+98         """
+99         # 获取下一个轮次号
+100 
+101         round_num = self.current_round
+102 
+103         # 获取当前时间戳
+104         timestamp = datetime.datetime.now().isoformat()
+105         
+106         # 创建轮次目录
+107         round_dir = os.path.join(self.issues_path, f"round_{round_num}")
+108         os.makedirs(round_dir, exist_ok=True)
+109         
+110         # 保存系统提示词
+111         with open(os.path.join(round_dir, self.SYS_PROMPT_FILE), "w", encoding="utf-8") as f:
+112             f.write(sys_prompt)
+113         
+114         # 保存用户提示词
+115         with open(os.path.join(round_dir, self.USER_PROMPT_FILE), "w", encoding="utf-8") as f:
+116             f.write(prompt)
+117         
+118         # 保存AI响应
+119         with open(os.path.join(round_dir, self.AI_RESPONSE_FILE), "w", encoding="utf-8") as f:
+120             f.write(response)
+121             
+122         # 保存时间戳
+123         with open(os.path.join(round_dir, self.TIMESTAMP_FILE), "w", encoding="utf-8") as f:
+124             f.write(timestamp)
+125 
+126         # 保存修改的文件列表
+127         if diff_infos:
+128             # 使用 Pydantic 的 dict 方法进行序列化
+129             diff_dicts = [diff.dict() for diff in diff_infos]
+130                 
+131             # 序列化为 JSON 并保存
+132             with open(os.path.join(round_dir, self.MODIFIED_FILES_FILE), "w", encoding="utf-8") as f:
+133                 json.dump(diff_dicts, f, ensure_ascii=False, indent=2)
+134             logger.info(f"保存了 {len(diff_infos)} 个修改的文件记录")
+135         
+136         # 记录日志
+137         logger.info(f"已将日志存档至: {round_dir}")
+138         
+139         # 返回存档目录的路径
+140         return round_dir
+141 
+142     def _get_next_round(self) -> int:
+143         """
+144         获取下一个轮次号
+145 
+146         Returns:
+147             int: 下一个轮次号
+148         """
+149         issue_path = self.issues_path
+150         if not os.path.exists(issue_path):
+151             return 1
+152 
+153         existing_rounds = [
+154             int(d[6:])
+155             for d in os.listdir(issue_path)
+156             if os.path.isdir(os.path.join(issue_path, d)) and (d[6:]).isdigit()
+157         ]
+158 
+159         return max(existing_rounds, default=0) + 1
+160 
+161     def get_current_round(self) -> int:
+162         return self.current_round
+163         
+164     def get_issue_log_entries(self, include_diff: bool = False) -> List[LogEntry]:
+165         """
+166         获取当前issue的所有轮次的日志条目
+167 
+168         Returns:
+169             List[LogEntry]: 日志条目列表，按轮次排序
+170         """
+171         
+172         log_entries = []
+173 
+174         issue_dir = self.issues_path
+175         # 遍历所有轮次目录
+176         for dir_name in os.listdir(issue_dir):
+177             if not dir_name.startswith("round_"):
+178                 continue
+179                 
+180             try:
+181                 round_num = int(dir_name[6:])  # 提取轮次号
+182                 round_dir = os.path.join(issue_dir, dir_name)
+183                 
+184                 # 读取系统提示词
+185                 sys_prompt_path = os.path.join(round_dir, self.SYS_PROMPT_FILE)
+186                 with open(sys_prompt_path, "r", encoding="utf-8") as f:
+187                     sys_prompt = f.read()
+188                 
+189                 # 读取用户提示词
+190                 user_prompt_path = os.path.join(round_dir, self.USER_PROMPT_FILE)
+191                 with open(user_prompt_path, "r", encoding="utf-8") as f:
+192                     prompt = f.read()
+193                 
+194                 # 读取AI响应
+195                 ai_response_path = os.path.join(round_dir, self.AI_RESPONSE_FILE)
+196                 with open(ai_response_path, "r", encoding="utf-8") as f:
+197                     response = f.read()
+198                     
+199                 # 读取修改的文件列表(如果存在)
+200                 modified_files = []
+201                 if include_diff:
+202                     modified_files_path = os.path.join(round_dir, self.MODIFIED_FILES_FILE)
+203                     if os.path.exists(modified_files_path):
+204                         try:
+205                             with open(modified_files_path, "r", encoding="utf-8") as f:
+206                                 diff_dicts = json.load(f)
+207                                 
+208                                 # 将字典转换回 DiffInfo 对象
+209                                 modified_files = [DiffInfo(**diff_dict) for diff_dict in diff_dicts]
+210                         except Exception as e:
+211                             logger.error(f"读取修改文件列表失败: {str(e)}")
+212                     
+213                 # 读取时间戳
+214                 timestamp_path = os.path.join(round_dir, self.TIMESTAMP_FILE)
+215                 timestamp = datetime.datetime.now().isoformat()  # 默认当前时间
+216                 if os.path.exists(timestamp_path):
+217                     try:
+218                         with open(timestamp_path, "r", encoding="utf-8") as f:
+219                             timestamp = f.read().strip()
+220                     except Exception as e:
+221                         logger.error(f"读取时间戳失败: {str(e)}")
+222                 
+223                 # 创建并添加LogEntry对象
+224                 entry = LogEntry(issue_id=self.issue_id, round_num=round_num,
+225                                  sys_prompt=sys_prompt, prompt=prompt, 
+226                                  response=response, timestamp=timestamp, log_path=round_dir,
+227                                  modified_files=modified_files)
+228                 log_entries.append(entry)
+229             except Exception as e:
+230                 logger.error(f"读取轮次 {dir_name} 的日志失败: {str(e)}")
+231         
+232         # 按轮次号排序
+233         return sorted(log_entries, key=lambda entry: entry.round_num)
+234     
+235     def get_issue_round_log_entry(self, round_num: int, include_diff: bool = False) -> Optional[LogEntry]:
+236         """
+237         获取特定轮次的日志条目
+238 
+239         Args:
+240             round_num: 轮次号
+241             include_diff: 是否包含修改信息
+242 
+243         Returns:
+244             Optional[LogEntry]: 指定轮次的日志条目，如果不存在则返回None
+245         """
+246         round_dir = os.path.join(self.issues_path, f"round_{round_num}")
+247         
+248         if not os.path.exists(round_dir):
+249             logger.warning(f"Issue #{self.issue_id} 的轮次 {round_num} 不存在")
+250             return None
+251             
+252         try:
+253             # 直接使用现有方法获取所有轮次，然后过滤出指定轮次
+254             all_entries = self.get_issue_log_entries(include_diff)
+255             return next((entry for entry in all_entries if entry.round_num == round_num), None)
+256         except Exception as e:
+257             logger.error(f"获取 Issue #{self.issue_id} 轮次 {round_num} 的日志失败: {str(e)}")
+258             return None
+259             
+260     def rollback_logs(self, target_round: int) -> bool:
+261         """
+262         将目标轮次之后的日志移至回滚目录
+263         
+264         Args:
+265             target_round: 保留到的轮次，之后的轮次会被移到回滚目录
+266             
+267         Returns:
+268             bool: 操作是否成功
+269         """
+270         try:
+271             # 确保回滚目录存在
+272             os.makedirs(self.rollback_path, exist_ok=True)
+273             
+274             # 获取所有轮次目录
+275             round_dirs = [d for d in os.listdir(self.issues_path) 
+276                          if os.path.isdir(os.path.join(self.issues_path, d)) 
+277                          and d.startswith("round_")]
+278             
+279             # 筛选出需要回滚的轮次目录
+280             rounds_to_rollback = []
+281             for dir_name in round_dirs:
+282                 try:
+283                     round_num = int(dir_name[6:])  # 提取轮次号
+284                     if round_num > target_round:
+285                         rounds_to_rollback.append((round_num, dir_name))
+286                 except ValueError:
+287                     continue
+288             
+289             # 按轮次号排序
+290             rounds_to_rollback.sort(key=lambda x: x[0])
+291             
+292             if not rounds_to_rollback:
+293                 logger.info(f"没有轮次需要回滚")
+294                 return True
+295                 
+296             # 移动轮次日志到回滚目录
+297             for round_num, dir_name in rounds_to_rollback:
+298                 source_path = os.path.join(self.issues_path, dir_name)
+299                 dest_path = os.path.join(self.rollback_path, dir_name)
+300                 
+301                 # 如果目标路径已存在，先删除
+302                 if os.path.exists(dest_path):
+303                     shutil.rmtree(dest_path)
+304                     
+305                 # 移动目录
+306                 shutil.move(source_path, dest_path)
+307                 logger.info(f"已将轮次 {round_num} 的日志移至回滚目录: {dest_path}")
+308             
+309             # 更新当前轮次
+310             self.current_round = self._get_next_round()
+311             return True
+312             
+313         except Exception as e:
+314             logger.error(f"回滚日志失败: {str(e)}")
+315             return False
+316     
+317     def get_rollback_log_entries(self, include_diff: bool = False) -> List[LogEntry]:
+318         """
+319         获取已回滚的所有轮次的日志条目
+320 
+321         Args:
+322             include_diff: 是否包含diff信息
+323 
+324         Returns:
+325             List[LogEntry]: 回滚的日志条目列表，按轮次排序
+326         """
+327         try:
+328             # 如果回滚目录不存在，返回空列表
+329             if not os.path.exists(self.rollback_path):
+330                 return []
+331                 
+332             # 临时保存当前issues_path
+333             original_path = self.issues_path
+334             
+335             # 将issues_path指向rollback_path，复用get_issue_log_entries方法
+336             self.issues_path = self.rollback_path
+337             
+338             # 获取回滚目录中的日志条目
+339             rollback_entries = self.get_issue_log_entries(include_diff)
+340             
+341             # 恢复issues_path
+342             self.issues_path = original_path
+343             
+344             return rollback_entries
+345         except Exception as e:
+346             logger.error(f"获取回滚日志条目失败: {str(e)}")
+347             return []
+348 
+349 if __name__ == "__main__":
+350     config = LogConfig("..", 1)
+351     log_manager = LogManager(config)
+352
+```
+
+
+
+
+```
+File: core/workflow_engine.py
+1 import os
+2 import shutil
+3 import tempfile
+4 import uuid
+5 from dataclasses import dataclass
+6 from typing import Optional
+7 
+8 from core.ai import AIConfig
+9 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+10 from core.code_engineer import CodeEngineer, CodeEngineerConfig
+11 from core.decision import DecisionProcess
+12 from core.diff import Diff
+13 from core.file_memory import FileMemory, FileMemoryConfig
+14 from core.file_selector import FileSelector
+15 from core.git_manager import GitManager, GitConfig
+16 from core.log_config import get_logger
+17 from core.log_manager import LogManager, LogConfig
+18 from core.prompt_generator import PromptGenerator, PromptData
+19 from core.version_manager import VersionManager
+20 
+21 logger = get_logger(__name__)
+22 
+23 @dataclass
+24 class WorkflowEngineConfig:
+25     project_dir: str
+26     issue_id:int
+27     core_model:str = "gpt-4o"
+28     data_model:str = "gpt-4o"
+29     core_template: float = 0.7
+30     data_template: float = 0.7
+31     max_retry: int = 3,
+32     default_branch: str = "main"
+33     mode: str = "client" # ["client", "bot"] bot模式下，每次进行工作时，会hard reset到issues的最新分支上
+34     base_url: Optional[str] = None
+35     api_key: Optional[str] = None
+36     github_remote_url: Optional[str] =None
+37     github_token: Optional[str] = None
+38 
+39 
+40 class WorkflowEngine:
+41     CODE_TIMES = 0
+42     CHAT_TIMES = 0
+43     """
+44     工作流引擎，协调版本管理、日志管理和AI交互
+45     """
+46     def __init__(self, config: WorkflowEngineConfig):
+47         """
+48         初始化工作流引擎
+49         
+50         Args:
+51             config: 工作流配置
+52         """
+53         self.CODE_TIMES = 0
+54         self.CHAT_TIMES = 0
+55         # 存储原始配置
+56         self.original_config = config
+57         
+58         # 根据模式设置工作目录
+59         if config.mode == "bot":
+60             # 创建临时目录作为工作区
+61             self.temp_dir = os.path.join(
+62                 tempfile.gettempdir(),
+63                 f"bella-bot-{config.issue_id}-{str(uuid.uuid4())[:8]}"
+64             )
+65             os.makedirs(self.temp_dir, exist_ok=True)
+66             # 更新配置以使用临时目录
+67             self.config = WorkflowEngineConfig(
+68                 project_dir=self.temp_dir,
+69                 **{k: v for k, v in vars(config).items() if k != 'project_dir'}
+70             )
+71             logger.info(f"Bot模式：创建临时工作目录 {self.temp_dir}")
+72         else:
+73             # 客户端模式直接使用指定的目录
+74             self.config = config
+75             self.temp_dir = None
+76             logger.info("当前为client模式")
+77 
+78         self.project_dir = os.path.abspath(self.config.project_dir)
+79         # 创建AI配置
+80         self.core_ai_config = AIConfig(
+81             model_name=config.core_model,
+82             temperature=config.core_template,
+83             base_url=config.base_url,
+84             api_key=config.api_key
+85         )
+86         
+87         self.data_ai_config = AIConfig(
+88             model_name=config.data_model,
+89             temperature=config.data_template,
+90             base_url=config.base_url,
+91             api_key=config.api_key
+92         )
+93         
+94         # 创建Git配置
+95         self.git_config = GitConfig(
+96             repo_path=self.project_dir,
+97             remote_url=config.github_remote_url or os.getenv("GIT_REMOTE"),
+98             auth_token=config.github_token or os.getenv("GITHUB_TOKEN"),
+99             default_branch=config.default_branch
+100         )
+101         
+102         # 创建日志配置
+103         self.log_config = LogConfig(
+104             project_dir=self.project_dir,
+105             issue_id=config.issue_id,
+106             mode=config.mode
+107         )
+108         
+109         # 初始化管理器
+110         self.git_manager = GitManager(config=self.git_config)
+111         self.log_manager = LogManager(config=self.log_config)
+112         
+113         # 初始化文件记忆管理，传入log_manager
+114         self.file_memory = FileMemory(
+115             config=FileMemoryConfig(
+116                 git_manager=self.git_manager,
+117                 ai_config=self.core_ai_config,
+118                 project_dir=self.project_dir,
+119                 log_manager=self.log_manager
+120             )
+121         )
+122         self.version_manager = VersionManager(
+123             issue_id=config.issue_id,
+124             ai_config=self.core_ai_config,
+125             log_manager=self.log_manager,
+126             git_manager=self.git_manager,
+127             file_memory=self.file_memory
+128         )
+129         self.file_selector = FileSelector(
+130             self.project_dir,
+131             self.config.issue_id,
+132             ai_config=self.core_ai_config
+133         )
+134 
+135         # 初始化代码工程师
+136         self.code_engineer_config = CodeEngineerConfig(
+137             project_dir=self.project_dir,
+138             ai_config=self.core_ai_config
+139         )
+140         self.engineer = CodeEngineer(
+141             self.code_engineer_config,
+142             self.log_manager,
+143             Diff(self.data_ai_config)
+144         )
+145         
+146         # 初始化聊天处理器
+147         self.chat_processor = ChatProcessor(
+148             ai_config=self.core_ai_config,
+149             log_manager=self.log_manager,
+150             config=ChatProcessorConfig(system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。")
+151         )
+152         
+153         # 初始化决策环境
+154         self.decision_env = DecisionProcess(
+155             ai_config=self.core_ai_config,
+156             version_manager=self.version_manager
+157         )
+158     
+159     def process_requirement(self, user_requirement: str) -> Optional[str]:
+160         """
+161         处理用户需求
+162         
+163         Args:
+164             user_requirement: 用户需求
+165 
+166         Returns:
+167             str: 处理结果的响应文本
+168         """
+169         try:
+170             # 初始化环境
+171             self._setup_environment()
+172             
+173             response = self._process_requirement_internal(user_requirement)
+174             
+175             # 如果是bot模式，在结束时清理临时目录
+176             if self.config.mode == "bot":
+177                 self._cleanup_environment()
+178             
+179             return response
+180         except Exception as e:
+181             logger.error(f"处理需求时发生错误: {str(e)}")
+182             raise
+183 
+184     def _setup_environment(self) -> None:
+185         """
+186         根据模式设置工作环境
+187         """
+188         if self.config.mode == "bot":
+189             try:
+190                 # 重置到issue对应的分支
+191                 self.git_manager.reset_to_issue_branch(self.config.issue_id)
+192                 logger.info(f"成功初始化Bot模式环境，工作目录: {self.temp_dir}")
+193             except Exception as e:
+194                 logger.error(f"初始化Bot模式环境失败: {str(e)}")
+195                 self._cleanup_environment()
+196                 raise
+197         current_round = self.log_manager.get_current_round()
+198 
+199         # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+200         if self.file_memory and current_round > 1:
+201             self.file_memory.update_file_details()
+202             logger.info("已更新文件详细信息")
+203 
+204     def _finalize_changes(self, mode: str, comment_text: str) -> bool:
+205         """
+206         完成更改，在bot模式下提交并推送更改
+207 
+208         Args:
+209             mode: 工作模式 ("client" 或 "bot")
+210             comment_text: comment内容
+211 
+212         Returns:
+213             bool: 操作是否成功
+214         """
+215         if mode == "bot":
+216             self.git_manager.commit(f"Issues #{self.config.issue_id} - Changes by Bella-Issues-Bot")
+217             self.git_manager.push()
+218             self.git_manager.add_issue_comment(self.config.issue_id, comment_text)
+219         return True
+220         
+221     def _cleanup_environment(self) -> None:
+222         """
+223         清理工作环境，删除临时目录
+224         """
+225         if self.config.mode == "bot" and self.temp_dir and os.path.exists(self.temp_dir):
+226             try:
+227                 # 关闭git仓库连接
+228                 if hasattr(self, 'git_manager') and self.git_manager:
+229                     self.git_manager.delete_local_repository()
+230                 
+231                 # 删除临时目录
+232                 shutil.rmtree(self.temp_dir, ignore_errors=True)
+233                 logger.info(f"已清理临时工作目录: {self.temp_dir}")
+234             except Exception as e:
+235                 logger.warning(f"清理临时目录时出错: {str(e)}")
+236                 # 即使清理失败也不抛出异常，让主流程继续
+237 
+238     def _process_requirement_internal(self, user_requirement: str) -> Optional[str]:
+239         """
+240         内部处理需求的方法
+241         
+242         Args:
+243             user_requirement: 用户需求
+244             
+245         Returns:
+246             str: 处理结果
+247         """
+248         # 先通过决策环境分析需求类型
+249         decision_result = self.decision_env.analyze_requirement(user_requirement)
+250         
+251         logger.info(f"决策结果: 是否需要修改代码={decision_result.needs_code_modification}, "
+252                     f"理由={decision_result.reasoning}")
+253         
+254         if decision_result.needs_code_modification:
+255             # 执行代码修改流程
+256             response = self._run_code_generation_workflow(user_requirement)
+257         else: 
+258             # 执行对话流程
+259             response = self._run_chat_workflow(user_requirement)
+260         
+261         # 如果是Bot模式且有GitHub配置，自动回复到issue
+262         if self.config.mode == "bot":
+263             try:
+264                 self._finalize_changes(mode=self.config.mode, comment_text=response)
+265                 logger.info(f"更改已经推送到远端，并添加了Issue评论")
+266             except Exception as e:
+267                 logger.error(f"添加Issue评论时出错: {str(e)}")
+268                 
+269         return response
+270     
+271     def _run_code_generation_workflow(self, user_requirement: str) -> Optional[str]:
+272         """
+273         执行代码生成流程，基于example_code_generate.py的逻辑
+274         
+275         Args:
+276             user_requirement: 用户需求
+277             
+278         Returns:
+279             str: 处理结果
+280         """
+281         logger.info("开始执行代码生成流程")
+282 
+283         # 确定当前版本
+284         requirement, history = self.version_manager.ensure_version_and_generate_context(user_requirement)
+285 
+286         # 生成提示词
+287         user_prompt = self._get_user_prompt(requirement, history)
+288 
+289         # 根据提示词修改代码
+290         success, response = self.engineer.process_prompt(prompt=user_prompt)
+291 
+292         # 提交更改
+293         if success:
+294             return response
+295         else:
+296             self.CODE_TIMES += 1
+297             if self.CODE_TIMES >= self.config.max_retry:
+298                 logger.error("code workflow超过最大重试次数")
+299                 return self._run_chat_workflow(user_requirement)
+300             else:
+301                 return self._run_code_generation_workflow(user_requirement)
+302     
+303     def _run_chat_workflow(self, user_requirement: str) -> Optional[str]:
+304         """
+305         执行聊天流程，基于example_chat_process.py的逻辑
+306         
+307         Args:
+308             user_requirement: 用户需求
+309             
+310         Returns:
+311             str: 处理结果
+312         """
+313         logger.info("开始执行聊天回复流程")
+314 
+315         history = self.version_manager.get_formatted_history()
+316 
+317         # 生成提示词
+318         user_prompt = self._get_user_prompt(user_requirement, history)
+319         
+320         # 处理聊天请求
+321         response = self.chat_processor.process_chat(user_prompt)
+322 
+323         if(response):
+324             return response
+325         else:
+326             self.CHAT_TIMES += 1
+327             if self.CHAT_TIMES >= self.config.max_retry:
+328                 logger.error("chat workflow超过最大重试次数")
+329                 return None
+330             else:
+331                 return self._run_chat_workflow(user_requirement)
+332 
+333     def _get_user_prompt(self, requirement: str, history: str) -> str:
+334         # 选择文件
+335         files = self.file_selector.select_files_for_requirement(requirement)
+336         descriptions = FileMemory.get_selected_file_descriptions(self.project_dir, files)
+337 
+338         # 准备提示词数据
+339         data = PromptData(
+340             requirement=requirement,
+341             project_dir=self.project_dir,
+342             steps=history,
+343             files=files,
+344             file_desc=descriptions
+345         )
+346 
+347         # 生成提示词
+348         return PromptGenerator.generatePrompt(data)
+349
+```
+
+
+
+
+```
+File: examples/example_code_generate.py
+1 import logging
+2 import os
+3 
+4 from dotenv import load_dotenv
+5 
+6 from core.ai import AIConfig
+7 from core.code_engineer import CodeEngineerConfig, CodeEngineer
+8 from core.diff import Diff
+9 from core.file_memory import FileMemory, FileMemoryConfig
+10 from core.file_selector import FileSelector
+11 from core.git_manager import GitManager, GitConfig
+12 from core.log_config import setup_logging
+13 from core.log_manager import LogManager, LogConfig
+14 from core.prompt_generator import PromptGenerator, PromptData
+15 from core.version_manager import VersionManager
+16 
+17 
+18 def main():
+19     setup_logging(log_level=logging.DEBUG)
+20     # 加载环境变量
+21     load_dotenv()
+22     
+23     # 创建工作目录
+24     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+25 
+26     issue_id = 3
+27     
+28     # 初始化日志管理器
+29     log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
+30     log_manager = LogManager(config=log_config)
+31     current_round = log_manager.get_current_round()
+32 
+33     
+34     # 初始化Git管理器
+35     git_config = GitConfig(
+36         repo_path=project_dir
+37     )
+38     git_manager = GitManager(config=git_config)
+39     
+40     # 初始化AI助手
+41     ai_config = AIConfig(
+42         model_name="coder-model",
+43         temperature=1
+44     )
+45     
+46     # 初始化版本管理器
+47     version_manager = VersionManager(issue_id=issue_id, log_manager=log_manager, git_manager=git_manager, ai_config=ai_config)
+48 
+49     current_requirement = '''
+50     将 example_chat_process.py 和 example_code_generate.py的流程整合到 workflow_engine.py 中，目前两个代码文件都是写代码和回复用户的完整流程。
+51     使用DecisionEnvironment来决策选择何种模式。
+52     '''
+53     requirement, history = version_manager.ensure_version_and_generate_context(current_requirement)
+54 
+55     if current_round > 1:
+56         file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
+57         file_memory.update_file_details()
+58 
+59     selector = FileSelector(
+60         project_dir,
+61         issue_id,
+62         ai_config=ai_config,
+63     )
+64 
+65     files = selector.select_files_for_requirement(requirement)
+66 
+67     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+68 
+69     data = PromptData(requirement=requirement, project_dir=project_dir, steps = history, files=files, file_desc=descriptions)
+70     user_prompt = PromptGenerator.generatePrompt(data)
+71     config = CodeEngineerConfig(project_dir=project_dir, ai_config=ai_config)
+72 
+73     engineer = CodeEngineer(config, LogManager(LogConfig(project_dir=project_dir, issue_id=issue_id)), Diff(AIConfig(temperature=0.1,
+74                                                                                                               model_name="gpt-4o")))
+75     engineer.process_prompt(prompt=user_prompt)
+76 
+77 
+78 if __name__ == "__main__":
+79     main()
+80
+```
+
+
+
+
+```
+File: examples/example_workflow.py
+1 """
+2 这个示例展示如何使用WorkflowEngine处理用户需求，自动决策是代码生成还是对话流程
+3 """
+4 import logging
+5 import os
+6 
+7 from dotenv import load_dotenv
+8 
+9 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+10 from core.log_config import setup_logging
+11 
+12 
+13 def main():
+14     setup_logging(log_level=logging.DEBUG)
+15     # 加载环境变量
+16     load_dotenv()
+17     
+18     # 创建工作目录
+19     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+20     issue_id = 5
+21     
+22     # 创建工作流引擎配置
+23     config = WorkflowEngineConfig(
+24         project_dir=project_dir,
+25         issue_id=issue_id,
+26         core_model="coder-model",
+27         data_model="gpt-4o",
+28         core_template=1,
+29         data_template=0.7,
+30         default_branch="dev"
+31     )
+32     
+33     # 初始化工作流引擎
+34     workflow_engine = WorkflowEngine(config)
+35 
+36     requirement = """
+37     分析项目的所有代码。把项目的Read.me进行完善。尤其是未完成的。
+38     """
+39     
+40     # 处理代码修改需求
+41     workflow_engine.process_requirement(requirement)
+42 
+43 if __name__ == "__main__":
+44     main()
+45
+```
+
+
+
+
+```
+File: examples/advanced/custom_workflow.py
+1 """
+2 高级示例：自定义工作流处理程序
+3 
+4 展示如何将bella-issues-bot集成到自定义应用程序中，
+5 包括自定义前处理和后处理逻辑。
+6 """
+7 
+8 import os
+9 from typing import Optional
+10 from client.runner import run_workflow
+11 
+12 
+13 def preprocess_requirement(raw_requirement: str) -> str:
+14     """
+15     预处理用户需求，增加额外的上下文信息
+16     
+17     Args:
+18         raw_requirement: 原始需求文本
+19         
+20     Returns:
+21         增强后的需求文本
+22     """
+23     # 例如：添加项目特定的规范或约束
+24     return f"{raw_requirement}\n\n注意：请确保代码遵循PEP 8规范，并包含适当的单元测试。"
+25 
+26 
+27 def postprocess_response(response: str) -> str:
+28     """
+29     处理AI响应，进行后期格式化或额外操作
+30     
+31     Args:
+32         response: AI生成的原始响应
+33         
+34     Returns:
+35         处理后的响应
+36     """
+37     # 例如：添加时间戳或标记
+38     from datetime import datetime
+39     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+40     return f"处理时间: {timestamp}\n\n{response}"
+41 
+42 
+43 # 示例使用
+44 if __name__ == "__main__":
+45     # 1. 读取并预处理需求
+46     with open("requirements/feature_request.txt", "r") as f:
+47         raw_requirement = f.read()
+48     
+49     enhanced_requirement = preprocess_requirement(raw_requirement)
+50     
+51     # 2. 运行工作流
+52     response = run_workflow(
+53         issue_id=301,
+54         requirement=enhanced_requirement,
+55         project_dir=os.getenv("PROJECT_DIR", "."),
+56         core_model=os.getenv("CORE_MODEL", "gpt-4o"),
+57         core_temperature=float(os.getenv("CORE_TEMP", "0.7"))
+58     )
+59     
+60     # 3. 后处理响应
+61     final_response = postprocess_response(response)
+62     
+63     print(final_response)
+64
+```
+
+
+
+
+# 用户需求
+
+为项目中的版本管理创建一个example
