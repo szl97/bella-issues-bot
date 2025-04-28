@@ -200,6 +200,23 @@ class WorkflowEngine:
         if self.file_memory and current_round > 1:
             self.file_memory.update_file_details()
             logger.info("已更新文件详细信息")
+
+    def _finalize_changes(self, mode: str, comment_text: str) -> bool:
+        """
+        完成更改，在bot模式下提交并推送更改
+
+        Args:
+            mode: 工作模式 ("client" 或 "bot")
+            comment_text: comment内容
+
+        Returns:
+            bool: 操作是否成功
+        """
+        if mode == "bot":
+            self.git_manager.commit(f"Issues #{self.config.issue_id} - Changes by Bella-Issues-Bot")
+            self.git_manager.push()
+            self.git_manager.add_issue_comment(self.config.issue_id, comment_text)
+        return True
         
     def _cleanup_environment(self) -> None:
         """
@@ -244,7 +261,7 @@ class WorkflowEngine:
         # 如果是Bot模式且有GitHub配置，自动回复到issue
         if self.config.mode == "bot":
             try:
-                self.version_manager.finalize_changes(mode=self.config.mode, comment_text=response)
+                self._finalize_changes(mode=self.config.mode, comment_text=response)
                 logger.info(f"更改已经推送到远端，并添加了Issue评论")
             except Exception as e:
                 logger.error(f"添加Issue评论时出错: {str(e)}")

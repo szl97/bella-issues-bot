@@ -133,6 +133,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="GitHub authentication token"
     )
+
+    parser.add_argument(
+        "-l",
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level")
     
     return parser.parse_args()
 

@@ -2,6 +2,7 @@
 Terminal entrypoint for the WorkflowEngine.
 Provides functionality to run the engine from terminal with command-line arguments.
 """
+import logging
 import os
 import sys
 
@@ -30,6 +31,8 @@ def run_workflow_from_terminal() -> str:
     
     # Build config from arguments
     config_params = build_config_from_args(args)
+
+    setup_logging(log_level=getattr(logging, args.log_level))
     
     # Try to get API key from environment if not provided as argument
     if "api_key" not in config_params and os.environ.get("OPENAI_API_KEY"):
@@ -50,6 +53,5 @@ def run_workflow_from_terminal() -> str:
 
 
 if __name__ == "__main__":
-    setup_logging()
     response = run_workflow_from_terminal()
 

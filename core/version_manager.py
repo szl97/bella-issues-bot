@@ -62,24 +62,6 @@ class VersionManager:
         requirement = original_requirement if requirement is None else requirement
         history = self.get_formatted_history()
         return requirement, history
-    
-    def finalize_changes(self, mode: str, comment_text: str) -> bool:
-        """
-        完成更改，在bot模式下提交并推送更改
-        
-        Args:
-            mode: 工作模式 ("client" 或 "bot")
-            comment_text: comment内容
-
-        Returns:
-            bool: 操作是否成功
-        """
-        if mode == "bot":
-            branch_name = f"bella-bot-issues-{self.current_issue_id}"
-            self.git_manager.commit(f"Issues #{self.current_issue_id} - Changes by Bella-Issues-Bot")
-            self.git_manager.push(branch=branch_name, force=False, set_upstream=True)
-            self.git_manager.add_issue_comment(self.current_issue_id, comment_text)
-        return True
 
     
     def _extract_history(self) -> List[VersionInfo]:
