@@ -17,7 +17,7 @@ core/diff.py:处理Git diff格式的工具类。提供从文本中解析diff信�
 core/file_fetcher.py:文件获取工具，提供FileFetcher类用于获取项目中的所有文件，支持.gitignore模式过滤，为代码分析和处理提供文件集合。
 core/file_memory.py:文件记忆管理模块，负责维护和更新项目文件的描述信息。包含FileMemory类，使用AI生成文件描述，支持Git和LogManager两种方式跟踪文件变更，并批量处理文件以提高效率。与AI和Git模块紧密交互。
 core/file_selector.py:实现基于AI的文件选择功能，通过分析需求自动确定相关文件。包含FileSelector类，提供select_files_for_requirement方法，使用AI助手和工具来智能筛选与特定功能相关的文件。与FileFetcher和FileMemory交互获取项目文件。
-core/git_manager.py:Git操作管理模块，提供了GitManager类，封装了Git仓库的各种操作功能。包含分支创建切换、代码拉取推送、提交变更、Issue评论添加等功能。通过GitConfig类配置仓库信息，支持认证令牌，实现与GitHub的交互操作。
+core/git_manager.py:Git操作管理模块，封装了与Git仓库交互的功能。包含GitConfig和GitManager两个主要类，提供克隆、拉取、推送、分支管理等Git操作。支持GitHub认证、Issue评论添加，并能处理仓库路径、远程URL和认证令牌，与GitHub工作流集成。
 core/log_config.py:日志配置模块，提供统一的日志设置功能。实现了setup_logging和get_logger函数，配置彩色控制台输出和文件日志记录，支持日志轮换。
 core/log_manager.py:管理代码生成日志的存储和检索。包含LogManager类，用于存档系统提示词、用户提示词、AI响应等内容，支持按issue和轮次组织日志。提供archive_logs和get_issue_log_entries等方法，记录代码生成过程。
 core/prompt_generator.py:提示词生成器，创建结构化提示并从提示中提取信息。使用模板生成包含文件描述、内容和需求的提示词，支持文件内容格式化。
@@ -30,7 +30,7 @@ examples/example_code_generate.py:代码生成流程示例，展示如何使用C
 examples/example_file_memory_client.py:示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
-pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖项和构建设置。包含项目版本、描述、依赖库列表、命令行入口点配置和代码风格工具设置。作为Python包管理的核心文件，使用poetry进行依赖管理。
+pyproject.toml:项目配置文件，定义了'bella-issues-bot'项目的元数据、依赖和构建信息。包含poetry配置、项目版本(0.1.8)、依赖库列表和命令行入口点。提供了三个主要脚本入口：终端工作流、文件记忆客户端和GitHub工作流生成器。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
 scripts/init_file_memory.sh:一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
 scripts/run_bot.sh:启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
