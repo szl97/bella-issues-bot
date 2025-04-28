@@ -584,14 +584,10 @@ class GitManager:
             logger.info(f"切换到分支: {target_branch}")
             self.switch_branch(target_branch, create=True)
 
-            # 拉取最新代码
-            logger.info(f"拉取远程分支: {remote_target} 的最新代码")
-            self.pull(target_branch)
-
             # 强制重置到远程分支状态
             logger.info(f"重置到远程分支: {remote_target}")
             self.repo.git.reset(f"{remote_target}", hard=True)
-
+            self.pull(target_branch)
             logger.info(f"成功重置到版本: {target_branch}")
             return True
         except git.GitCommandError as e:
