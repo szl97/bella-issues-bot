@@ -62,7 +62,7 @@ jobs:
           OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
           OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
           GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
-          GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+          GITHUB_TOKEN: ${{{{ secrets.GIT_TOKEN }}}}
         run: |
           bella-file-memory -d . -m {model} -t {temperature}
 
@@ -128,7 +128,7 @@ jobs:
           OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
           OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
           GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
-          GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+          GITHUB_TOKEN: ${{{{ secrets.GIT_TOKEN }}}}
           ISSUE_ID: ${{{{ steps.issue.outputs.issue_id }}}}
         run: |
           # Run bella-issues-bot in bot mode - it will handle branch creation and pushing
