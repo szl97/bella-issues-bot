@@ -636,8 +636,7 @@ class GitManager:
 
             if branch_exists:
                 # 切换到issue分支
-                self.switch_branch(issue_branch_name, create=True)
-                self.pull()
+                self.reset_to(issue_branch_name)
             else:
                 self.pull()
                 self.switch_branch(issue_branch_name, create=True)
