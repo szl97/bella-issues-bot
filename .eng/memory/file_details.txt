@@ -1,5 +1,6 @@
 README.md:项目主要说明文档，介绍bella-issues-bot的功能和使用方法。包含项目简介、主要功能、记忆与上下文管理系统介绍、安装方法、使用方法和环境变量配置说明。
 client/README.md:WorkflowEngine客户端文档，详细介绍了系统的记忆与上下文管理机制（日志管理、版本管理、文件记忆），支持的工作模式（客户端和机器人模式），以及命令行和编程API的使用方法和配置选项。
+client/README_FILE_MEMORY.md:FileMemory客户端文档，详细介绍了bella-issues-bot的文件记忆系统组件，包括其功能特点、安装方法、使用方式、工作原理和配置选项。核心功能是维护项目文件的功能描述，支持命令行和编程方式使用，能够智能增量更新文件描述。
 client/README_GITHUB_WORKFLOWS.md:该文档说明bella-issues-bot的GitHub工作流生成器功能，包括两个主要工作流：记忆初始化工作流（分析项目文件并生成描述）和Issue处理工作流（处理Issue需求并自动实现代码）。文档详细介绍了这些工作流的触发条件和功能。
 client/__init__.py:Client包的初始化文件，用于从终端运行WorkflowEngine。导出了file_memory_client模块中的initialize_file_memory、update_file_descriptions和process_failed_files函数供编程使用。
 client/cli.py:WorkflowEngine的命令行接口，提供解析命令行参数的功能。包含parse_args、get_requirement_text和build_config_from_args三个主要函数，支持统一和独立的模型配置选项。
@@ -22,6 +23,8 @@ core/log_manager.py:管理代码生成日志的存储和检索。包含LogManage
 core/prompt_generator.py:提示词生成器，创建结构化提示并从提示中提取信息。使用模板生成包含文件描述、内容和需求的提示词，支持文件内容格式化。
 core/version_manager.py:版本管理模块，负责代码生成的版本控制、历史追踪和回退功能。包含VersionManager类，提供历史轮次分析、格式化历史记录、需求整合和版本回退功能。与GitManager、LogManager交互，为AI助手提供版本管理工具。
 core/workflow_engine.py:工作流引擎核心类，协调版本管理、日志管理和AI交互。实现了处理用户需求的完整流程，支持代码生成和聊天两种工作模式，包含环境设置、清理和决策分析功能。
+examples/advanced/custom_workflow.py:高级示例代码，展示如何将bella-issues-bot集成到自定义应用程序中。包含preprocess_requirement和postprocess_response两个主要函数，分别用于需求预处理和响应后处理，实现了工作流的自定义扩展。
+examples/advanced/requirements/feature_request.txt:示例需求文件，描述了一个文件上传系统的功能需求，包括多文件上传、大小限制、支持的文件类型、存储方式、返回信息和安全验证等具体要求，用于测试自定义工作流处理。
 examples/example_chat_process.py:聊天处理流程示例，展示如何使用ChatProcessor处理用户对话需求。与代码生成示例不同，不使用版本管理，主要演示如何回答用户关于项目的问题。
 examples/example_code_generate.py:代码生成流程示例，展示如何使用CodeEngineer处理代码修改需求。演示了从需求分析到代码生成和提交的完整流程，包含main函数作为入口点。
 examples/example_file_memory_client.py:示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
