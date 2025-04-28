@@ -44,13 +44,4 @@ jobs:
           GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
         run: |
-          bella-file-memory -d . -m gpt-4o -t 0.7
-
-      - name: Commit memory files if changed
-        if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.force_run == 'true') || (steps.check_commit.outputs.is_bot_commit == 'false') }}
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add .eng/memory/
-          git diff --staged --quiet || git commit -m "Update file memory [skip ci]"
-          git push
+          bella-file-memory --mode bot -m coder-model -t 0.7 --git-url "${{ github.server_url }}/${{ github.repository }}" --git-token "${{ secrets.GIT_TOKEN }}" -u "${{ secrets.OPENAI_API_BASE }}" -k "${{ secrets.OPENAI_API_KEY }}"

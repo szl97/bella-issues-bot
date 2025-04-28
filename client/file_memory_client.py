@@ -158,7 +158,9 @@ def main() -> None:
             update_file_descriptions(file_memory)
             logger.info("Updated descriptions files")
 
-
+        file_memory.git_manager.commit("Update file memory [skip ci]", add_all=False, files=[".eng/memory/file_details.txt", ".eng/memory/git_id"])
+        file_memory.git_manager.pull()
+        file_memory.git_manager.push()
         file_memory.git_manager.delete_local_repository()
     finally:
         if args.mode == "bot":
@@ -168,5 +170,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    setup_logging()
+    setup_logging(logging.DEBUG)
     main()

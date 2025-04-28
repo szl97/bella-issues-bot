@@ -134,19 +134,18 @@ jobs:
         
       - name: 初始化文件记忆
         if: ${{ steps.check_commit.outputs.is_bot_commit == 'false' || github.event.inputs.force_run == 'true' }}
-        run: bella-file-memory
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
-          
-      - name: 提交记忆文件
-        if: ${{ steps.check_commit.outputs.is_bot_commit == 'false' || github.event.inputs.force_run == 'true' }}
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add .eng/memory/
-          git commit -m "Update file memory [skip ci]" || echo "No changes to commit"
-          git push
+           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}
+        run: bella-file-memory \
+              --mode bot \
+              --model gpt-4o \
+              -u "https://api.openai.com/v1" \
+              -k "sk-xxxxx" \
+              --git-url "https://github.com/szl97/bella-issues-bot.git" \
+              --git-token "githubxxxxx"
 ```
 
 ### Issue处理工作流 (`issue_process.yml`)
@@ -183,6 +182,11 @@ jobs:
         run: pip install bella-issues-bot
         
       - name: 处理Issue
+        env:
+           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}
         run: |
           # 提取Issue ID和需求
           ISSUE_ID=${{ github.event.issue.number }}
@@ -193,12 +197,10 @@ jobs:
             --issue-id $ISSUE_ID \
             --requirement "$REQUIREMENT" \
             --mode bot \
-            --github-token ${{ secrets.GITHUB_TOKEN }} \
-            --github-remote-url ${{ github.server_url }}/${{ github.repository }}
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            -u "https://api.openai.com/v1" \
+            -k "sk-xxxxx" \
+            --git-url "https://github.com/szl97/bella-issues-bot.git" \
+            --git-token "githubxxxxx"
 ```
 
 ## 使用场景

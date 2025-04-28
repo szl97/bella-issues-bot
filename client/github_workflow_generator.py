@@ -64,16 +64,7 @@ jobs:
           GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
           GITHUB_TOKEN: ${{{{ secrets.GIT_TOKEN }}}}
         run: |
-          bella-file-memory -d . -m {model} -t {temperature}
-
-      - name: Commit memory files if changed
-        if: ${{{{ (github.event_name == 'workflow_dispatch' && github.event.inputs.force_run == 'true') || (steps.check_commit.outputs.is_bot_commit == 'false') }}}}
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add .eng/memory/
-          git diff --staged --quiet || git commit -m "Update file memory [skip ci]"
-          git push
+          bella-file-memory --mode bot -m {model} -t {temperature} --git-url "${{{{ github.server_url }}}}/${{{{ github.repository }}}}" --git-token "${{{{ secrets.GIT_TOKEN }}}}" -u "${{{{ secrets.OPENAI_API_BASE }}}}" -k "${{{{ secrets.OPENAI_API_KEY }}}}"
 """
 
 # Template for issue processing workflow
@@ -132,7 +123,7 @@ jobs:
           ISSUE_ID: ${{{{ steps.issue.outputs.issue_id }}}}
         run: |
           # Run bella-issues-bot in bot mode - it will handle branch creation and pushing
-          bella-issues-bot --mode bot --issue-id ${{{{ steps.issue.outputs.issue_id }}}} --core-model {core_model} --data-model {data_model} --core-temperature {core_temperature} --data-temperature {data_temperature} --requirement "${{{{ steps.issue.outputs.requirement }}}}"
+          bella-issues-bot --mode bot --issue-id ${{{{ steps.issue.outputs.issue_id }}}} --core-model {core_model} --data-model {data_model} --core-temperature {core_temperature} --data-temperature {data_temperature} --requirement "${{{{ steps.issue.outputs.requirement }}}}" --git-url "${{{{ github.server_url }}}}/${{{{ github.repository }}}}" --git-token "${{{{ secrets.GIT_TOKEN }}}}" -u "${{{{ secrets.OPENAI_API_BASE }}}}" -k "${{{{ secrets.OPENAI_API_KEY }}}}"
 """
 
 def generate_workflow_files(
@@ -182,7 +173,7 @@ def generate_workflow_files(
     memory_workflow_path = os.path.join(workflows_dir, "memory_init.yml")
     memory_workflow_content = MEMORY_INIT_TEMPLATE.format(
         branch=base_branch,
-        model=model,
+        model=actual_core_model,
         temperature=temperature,
         package_version=package_version
     )
