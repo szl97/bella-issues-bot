@@ -6,8 +6,10 @@ python -m client.terminal --issue-id 42 --requirement "Create a README file"
 
 Or programmatically as shown below:
 """
+import logging
 
 from client.runner import run_workflow
+from core.log_config import setup_logging
 
 
 def example_run():
@@ -20,4 +22,5 @@ def example_run():
 
 
 if __name__ == "__main__":
+    setup_logging(log_level=logging.DEBUG)
     example_run()

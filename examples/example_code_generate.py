@@ -1,3 +1,4 @@
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -8,12 +9,14 @@ from core.diff import Diff
 from core.file_memory import FileMemory, FileMemoryConfig
 from core.file_selector import FileSelector
 from core.git_manager import GitManager, GitConfig
+from core.log_config import setup_logging
 from core.log_manager import LogManager, LogConfig
 from core.prompt_generator import PromptGenerator, PromptData
 from core.version_manager import VersionManager
 
 
 def main():
+    setup_logging(log_level=logging.DEBUG)
     # 加载环境变量
     load_dotenv()
     
@@ -33,7 +36,6 @@ def main():
         repo_path=project_dir
     )
     git_manager = GitManager(config=git_config)
-    branch_name = get_issues_branch_name(issue_id, current_round)
     
     # 初始化AI助手
     ai_config = AIConfig(
@@ -54,8 +56,6 @@ def main():
         file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
         file_memory.update_file_details()
 
-    git_manager.switch_branch(branch_name, True)
-
     selector = FileSelector(
         project_dir,
         issue_id,
@@ -74,12 +74,6 @@ def main():
                                                                                                               model_name="gpt-4o")))
     engineer.process_prompt(prompt=user_prompt)
 
-    #未实现chat_processor的功能
-
-    git_manager.commit(f"issues#{issue_id}-generate by Bella-Issues-Bot")
-
-
-    git_manager.push(branch=branch_name, force=True)
 
 if __name__ == "__main__":
     main()

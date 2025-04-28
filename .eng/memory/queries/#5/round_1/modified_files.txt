@@ -1,0 +1,58 @@
+[
+  {
+    "file_name": "client/README_FILE_MEMORY.md",
+    "content": "diff\n--- client/README_FILE_MEMORY.md\n+++ client/README_FILE_MEMORY.md\n@@ -14,5 +14,79 @@ FileMemory 是 bella-issues-bot 的强大记忆系统组件之一，负责维护\n ## 安装\n \n FileMemory 客户端作为 bella-issues-bot 的一部分安装:\n+\n",
+    "file_content": "# FileMemory 客户端\n\nFileMemory 是 bella-issues-bot 的强大记忆系统组件之一，负责维护项目中所有文件的功能描述。通过 FileMemory，系统能够了解项目的整体结构和每个文件的作用，从而在处理用户需求时提供更加上下文相关的代码生成和修改。\n\n## 特点与优势\n\n- **文件功能描述**：自动分析并生成项目中每个文件的功能描述\n- **智能增量更新**：只为新增和变更的文件生成描述，提高效率\n- **Git 集成**：使用 Git 历史记录追踪文件变更\n- **独立运行**：可以独立于主工作流运行，专注于文件记忆维护\n- **批量处理**：智能地将文件分批处理，可处理大型项目\n- **失败重试**：提供对失败文件的重试机制\n\n## 安装\n\nFileMemory 客户端作为 bella-issues-bot 的一部分安装:\n\n\n",
+    "is_create": false,
+    "is_modify": true,
+    "is_delete": false
+  },
+  {
+    "file_name": "README.md",
+    "content": "diff\n--- README.md\n+++ README.md\n@@ -11,16 +11,27 @@\n \n ## 主要功能\n \n-- **需求分析**：自动理解和分解用户的功能需求\n-- **代码生成**：根据需求生成符合项目风格的代码\n-- **版本管理**：与Git集成，支持分支创建和代码提交\n-- **记忆系统**：记录项目文件描述和操作历史，提供上下文感知能力\n+- **需求分析**：自动理解和分解用户的功能需求，确定所需的代码修改\n+- **代码生成**：根据需求生成符合项目风格的代码，自动实现新功能或修复问题\n+- **版本管理**：与Git深度集成，支持分支创建、代码提交和拉取请求的自动管理\n+- **记忆系统**：记录项目文件描述和操作历史，提供上下文感知能力，持续改进代码质量\n+\n+### 典型使用场景\n+\n+- **日常开发辅助**：在本地开发过程中，使用命令行工具快速生成代码、解决技术问题\n+- **项目自动化**：集成到GitHub工作流，实现Issue的自动处理和代码实现\n+- **代码文档生成**：自动分析项目文件并生成详细的功能描述\n+- **技术难题解决**：分析项目上下文后，针对性地提供解决方案\n \n ## 记忆与上下文管理\n \n bella-issues-bot 配备了强大的记忆系统，由三个核心组件构成：\n \n+### 记忆系统的工作流程\n+\n+1. **初始化阶段**：首次运行时，系统会扫描整个项目并为每个文件生成详细描述\n+2. **增量更新**：后续运行时，只会更新新增或修改的文件描述，提高效率\n+3. **上下文提取**：处理用户需求时，系统根据需求内容选择相关文件作为上下文\n+\n ### 1. 日志管理 (LogManager)\n \n LogManager 负责记录每次交互的完整历史，包括：\n@@ -84,25 +95,48 @@\n )\n \n",
+    "file_content": "# bella-issues-bot\n\n## 项目简介\n\nbella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：\n\n1. **个人开发助手模式**：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。\n2. **GitHub自动化模式**：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。\n\n通过对项目结构的深入理解和强大的代码生成能力，bella-issues-bot 能够显著提高开发效率，减少重复工作，让您专注于更有创造性的任务。\n\n## 主要功能\n\n- **需求分析**：自动理解和分解用户的功能需求\n- **代码生成**：根据需求生成符合项目风格的代码\n- **版本管理**：与Git集成，支持分支创建和代码提交\n- **记忆系统**：记录项目文件描述和操作历史，提供上下文感知能力\n\n## 记忆与上下文管理\n\nbella-issues-bot 配备了强大的记忆系统，由三个核心组件构成：\n\n### 1. 日志管理 (LogManager)\n\nLogManager 负责记录每次交互的完整历史，包括：\n- 系统提示词和用户需求\n- AI响应内容\n- 文件修改记录和差异对比\n\n这些日志按issue和轮次组织，支持历史追溯和问题诊断。每轮交互都会生成详细日志，便于追踪AI的决策过程和代码修改历史。\n\n### 2. 版本管理 (VersionManager)\n\nVersionManager 提供智能的版本控制功能：\n- 自动提取历史轮次的需求和响应\n- 生成格式化的历史执行记录作为上下文\n- 分析当前需求与历史需求的关系\n- 根据需要执行版本回退操作\n\n系统会分析新需求与先前修改的关系，判断是否需要回滚，确保代码修改的连贯性和一致性。\n\n### 3. 文件记忆 (FileMemory)\n\nFileMemory 模块为项目的每个文件维护详细描述：\n- 自动生成文件功能、结构和关系描述\n- 跟踪文件变更，更新受影响文件的描述\n- 提供上下文相关的文件选择\n- 支持配置忽略文件，默认包含项目的.gitignore，支持自定义添加.eng/.engignore\n\n这使得AI助手能够理解整个代码库的结构和功能，在修改代码时考虑到更广泛的项目上下文。\n\n## 安装方法\n\n使用pip安装：\n\n```bash\npip install bella-issues-bot\n```\n\n## 使用方法\n\nbella-issues-bot 提供了多种使用方式：\n\n### 个人开发模式\n\n在日常开发中，您可以通过命令行界面或编程API使用bella-issues-bot：\n\n#### 命令行使用\n\n```bash\nbella-issues-bot --issue-id <问题ID> --requirement \"你的需求描述\"\n```\n\n更多高级选项和详细使用说明，请参考[客户端文档](./client/README.md)。\n\n#### 编程API使用\n\n```python\nfrom client.runner import run_workflow\n\nrun_workflow(\n    issue_id=42,\n    requirement=\"创建一个简单的README文件\",\n    core_temperature=0.7\n)\n```\n\n## 环境变量配置\n\n工具会读取以下环境变量：\n\n- `OPENAI_API_KEY`: OpenAI API密钥\n- `OPENAI_API_BASE`: OpenAI API基础URL\n- `GITHUB_REMOTE_URL`: GitHub远程仓库URL\n- `GITHUB_TOKEN`: GitHub身份验证令牌\n- 在项目文件的.eng/目录下创建 .engignore文件，示例[examples](./.engignore.example)\n\n## 示例\n\n可以在[examples](./examples/)目录下找到使用示例。\n\n### 文件记忆初始化\n\n在项目根目录执行 `bella-file-memory` 可以初始化文件记忆系统，它会自动分析项目中的文件并生成描述信息。\n更多详细信息请参阅[文件记忆客户端文档](./client/README_FILE_MEMORY.md)。\n\n### GitHub工作流集成\n\nbella-issues-bot 提供了一个工具，可以自动为您的项目生成 GitHub Actions 工作流配置：\n\n```bash\nbella-github-workflows [选项]\n```\n\n- `--base-branch`, `-bb` - 拉取请求的目标分支（默认：main）\n- `--model`, `-m` - 默认模型（默认：gpt-4o）\n- `--temperature`, `-t` - 默认温度（默认：0.7）\n\n详细信息请参考[GitHub工作流文档](./client/README_GITHUB_WORKFLOWS.md).\n",
+    "is_create": false,
+    "is_modify": true,
+    "is_delete": false
+  },
+  {
+    "file_name": "client/README_GITHUB_WORKFLOWS.md",
+    "content": "diff\n--- client/README_GITHUB_WORKFLOWS.md\n+++ client/README_GITHUB_WORKFLOWS.md\n@@ -21,7 +21,7 @@\n \n ## 命令行使用方式\n \n-bella-github-workflows [选项]\n+运行以下命令生成GitHub工作流文件：`bella-github-workflows [选项]`\n \n ### 记忆初始化工作流 (`memory_init.yml`)\n \n@@ -48,3 +48,45 @@\n 7. 在Issue中添加处理结果的评论\n \n ## GitHub配置要求\n+\n+要使这些工作流正常运行，您需要在GitHub仓库中配置以下内容：\n+\n+1. **秘密 (Secrets)**\n+   - `OPENAI_API_KEY`: 您的OpenAI API密钥\n+   - `OPENAI_API_BASE`: (可选) 自定义API基础URL\n+   - `GITHUB_TOKEN`: GitHub自动提供，无需手动配置\n+\n+2. **权限设置**\n+   - 确保工作流有适当的权限：读写内容和Issues权限\n+\n+## 命令行参数\n+\n+\n",
+    "file_content": "# GitHub工作流生成器\n\nbella-issues-bot 提供了自动生成 GitHub Actions 工作流配置的功能，可以轻松将 AI 助手集成到您的 GitHub 项目中。\n\n## 功能概述\n\n工作流生成器会创建两个GitHub Actions工作流文件：\n\n1. **记忆初始化工作流** (`memory_init.yml`)\n   - 当指定分支有推送时触发\n   - 会跳过机器人自身的提交（通过检查提交信息中的\"Update file memory\"）\n   - 分析项目文件并生成文件描述\n   - 将记忆文件提交回仓库\n\n2. **Issue处理工作流** (`issue_process.yml`)\n   - 在创建新Issue或添加评论时触发\n   - 自动提取Issue或评论中的需求\n   - 在专用分支上处理需求并实现代码\n   - 创建拉取请求，提供解决方案\n   - 在Issue中添加处理结果的评论\n\n## 命令行使用方式\n\nbella-github-workflows [选项]\n\n### 记忆初始化工作流 (`memory_init.yml`)\n\n此工作流在指定分支有推送时运行，它：\n1. 检查提交是否由自动化机器人产生（含有\"Update file memory\"的提交信息）\n   - 如果是机器人提交，则会跳过执行，防止无限循环\n   - 可以通过workflow_dispatch手动触发并强制执行\n2. 检出代码库\n3. 设置Python环境\n4. 安装bella-issues-bot\n5. 初始化文件记忆系统，生成项目文件描述\n6. 将生成的记忆文件提交回仓库（提交信息带有[skip ci]标记）\n\n### Issue处理工作流 (`issue_process.yml`)\n\n此工作流在创建新Issue或添加评论时运行，具体步骤如下：\n1. 检出代码库\n2. 设置Python环境\n3. 安装bella-issues-bot\n4. 提取Issue或评论中的需求\n5. 运行bella-issues-bot处理需求（它会自动创建分支并提交代码）\n   - 如果评论以\"bella-issues-bot已处理：\"开头，则跳过处理\n6. 创建拉取请求\n7. 在Issue中添加处理结果的评论\n\n## GitHub配置要求\n",
+    "is_create": false,
+    "is_modify": true,
+    "is_delete": false
+  },
+  {
+    "file_name": ".engignore.example",
+    "content": "diff\n--- /dev/null\n+++ .engignore.example\n@@ -0,0 +1,19 @@\n+# bella-issues-bot 忽略文件配置示例\n+# 类似于.gitignore的语法\n+\n+# 忽略所有日志文件\n+*.log\n+\n+# 忽略构建和临时目录\n+build/\n+dist/\n+tmp/\n+.cache/\n+\n+# 忽略测试文件\n+test_*.py\n+*_test.py\n+\n+# 忽略大型数据文件\n+*.csv\n+*.parquet\n\n",
+    "file_content": "",
+    "is_create": true,
+    "is_modify": false,
+    "is_delete": false
+  },
+  {
+    "file_name": "examples/README.md",
+    "content": "diff\n--- /dev/null\n+++ examples/README.md\n@@ -0,0 +1,73 @@\n+# bella-issues-bot 使用示例\n+\n+本目录包含了bella-issues-bot的各种使用场景的示例，帮助您快速上手和理解工具的功能。\n+\n+## 基础使用示例\n+\n+### 1. 个人开发助手模式\n+\n+#### 命令行使用\n+\n+\n",
+    "file_content": "",
+    "is_create": true,
+    "is_modify": false,
+    "is_delete": false
+  },
+  {
+    "file_name": "examples/advanced/custom_workflow.py",
+    "content": "diff\n--- /dev/null\n+++ examples/advanced/custom_workflow.py\n@@ -0,0 +1,41 @@\n+\"\"\"\n+高级示例：自定义工作流处理程序\n+\n+展示如何将bella-issues-bot集成到自定义应用程序中，\n+包括自定义前处理和后处理逻辑。\n+\"\"\"\n+\n+import os\n+from typing import Optional\n+from client.runner import run_workflow\n+\n+\n+def preprocess_requirement(raw_requirement: str) -> str:\n+    \"\"\"\n+    预处理用户需求，增加额外的上下文信息\n+    \n+    Args:\n+        raw_requirement: 原始需求文本\n+        \n+    Returns:\n+        增强后的需求文本\n+    \"\"\"\n+    # 例如：添加项目特定的规范或约束\n+    return f\"{raw_requirement}\\n\\n注意：请确保代码遵循PEP 8规范，并包含适当的单元测试。\"\n+\n+\n+def postprocess_response(response: str) -> str:\n+    \"\"\"\n+    处理AI响应，进行后期格式化或额外操作\n+    \n+    Args:\n+        response: AI生成的原始响应\n+        \n+    Returns:\n+        处理后的响应\n+    \"\"\"\n+    # 例如：添加时间戳或标记\n+    from datetime import datetime\n+    timestamp = datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")\n+    return f\"处理时间: {timestamp}\\n\\n{response}\"\n+\n+\n+# 示例使用\n+if __name__ == \"__main__\":\n+    # 1. 读取并预处理需求\n+    with open(\"requirements/feature_request.txt\", \"r\") as f:\n+        raw_requirement = f.read()\n+    \n+    enhanced_requirement = preprocess_requirement(raw_requirement)\n+    \n+    # 2. 运行工作流\n+    response = run_workflow(\n+        issue_id=301,\n+        requirement=enhanced_requirement,\n+        project_dir=os.getenv(\"PROJECT_DIR\", \".\"),\n+        core_model=os.getenv(\"CORE_MODEL\", \"gpt-4o\"),\n+        core_temperature=float(os.getenv(\"CORE_TEMP\", \"0.7\"))\n+    )\n+    \n+    # 3. 后处理响应\n+    final_response = postprocess_response(response)\n+    \n+    print(final_response)\n\n",
+    "file_content": "",
+    "is_create": true,
+    "is_modify": false,
+    "is_delete": false
+  },
+  {
+    "file_name": "examples/advanced/requirements/feature_request.txt",
+    "content": "diff\n--- /dev/null\n+++ examples/advanced/requirements/feature_request.txt\n@@ -0,0 +1,9 @@\n+功能需求：实现文件上传系统\n+\n+需要开发一个文件上传模块，具有以下功能：\n+1. 支持多文件同时上传\n+2. 文件大小限制为50MB\n+3. 支持的文件类型：PDF, DOCX, XLSX, JPG, PNG\n+4. 文件存储在服务器本地，路径可配置\n+5. 上传成功后返回文件的唯一标识符和访问URL\n+6. 实现基本的文件类型验证和安全检查\n\n",
+    "file_content": "",
+    "is_create": true,
+    "is_modify": false,
+    "is_delete": false
+  }
+]

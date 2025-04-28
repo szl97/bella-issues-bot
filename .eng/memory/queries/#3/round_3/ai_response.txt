@@ -1,0 +1,207 @@
+I'll create the README files for both the FileMemory client and the overall project. Let me implement both files with comprehensive documentation about how to use the FileMemory client and its integration within the larger project.
+
+```diff
+--- README.md
++++ README.md
+@@ -94,3 +94,10 @@
+ - `GITHUB_TOKEN`: GitHub身份验证令牌
+ 
+ ## 示例
++
++可以在[examples](./examples/)目录下找到使用示例。
++
++### 文件记忆初始化
++
++在项目根目录执行 `bella-file-memory` 可以初始化文件记忆系统，它会自动分析项目中的文件并生成描述信息。
++更多详细信息请参阅[文件记忆客户端文档](./client/README_FILE_MEMORY.md)。
+```
+
+Now let's create a detailed README for the FileMemory client:
+
+```diff
+--- /dev/null
++++ client/README_FILE_MEMORY.md
+@@ -0,0 +1,148 @@
++# FileMemory 客户端
++
++FileMemory 是 bella-issues-bot 的强大记忆系统组件之一，负责维护项目中所有文件的功能描述。通过 FileMemory，系统能够了解项目的整体结构和每个文件的作用，从而在处理用户需求时提供更加上下文相关的代码生成和修改。
++
++## 特点与优势
++
++- **文件功能描述**：自动分析并生成项目中每个文件的功能描述
++- **智能增量更新**：只为新增和变更的文件生成描述，提高效率
++- **Git 集成**：使用 Git 历史记录追踪文件变更
++- **独立运行**：可以独立于主工作流运行，专注于文件记忆维护
++- **批量处理**：智能地将文件分批处理，可处理大型项目
++- **失败重试**：提供对失败文件的重试机制
++
++## 安装
++
++FileMemory 客户端作为 bella-issues-bot 的一部分安装:
++
++```bash
++pip install bella-issues-bot
++```
++
++## 使用方法
++
++### 命令行使用
++
++#### 使用内置命令
++
++安装后可以直接使用 `bella-file-memory` 命令：
++
++```bash
++bella-file-memory -d /path/to/project
++```
++
++#### 使用Python模块
++
++也可以直接使用 Python 模块：
++
++```bash
++python -m client.file_memory_client -d /path/to/project
++```
++
++#### 使用便捷脚本
++
++项目提供了便捷脚本简化调用：
++
++```bash
++./scripts/init_file_memory.sh -d /path/to/project
++```
++
++### 命令行参数
++
++FileMemory 客户端支持以下命令行参数：
++
++| 参数 | 简写 | 描述 | 默认值 |
++|------|------|------|--------|
++| `--directory` | `-d` | 项目目录路径 | 当前目录 |
++| `--model` | `-m` | 使用的AI模型名称 | gpt-4o |
++| `--temperature` | `-t` | AI生成温度 | 0.7 |
++| `--api-key` | `-k` | OpenAI API密钥 | 环境变量 OPENAI_API_KEY |
++| `--base-url` | `-u` | API调用的基础URL | OpenAI默认URL |
++| `--git-url` | - | Git远程URL | 环境变量 GIT_REMOTE_URL |
++| `--git-token` | - | Git认证令牌 | 环境变量 GITHUB_TOKEN |
++| `--log-level` | `-l` | 日志级别(DEBUG/INFO/WARNING/ERROR) | INFO |
++| `--failed-only` | - | 仅处理之前失败的文件 | False |
++
++示例：
++
++```bash
++# 基本用法
++bella-file-memory -d ./my-project
++
++# 使用自定义模型和温度
++bella-file-memory -d ./my-project -m gpt-4 -t 0.5
++
++# 仅重试失败文件
++bella-file-memory -d ./my-project --failed-only
++
++# 自定义日志级别
++bella-file-memory -d ./my-project -l DEBUG
++```
++
++### 编程方式使用
++
++您也可以在Python代码中以编程方式使用FileMemory客户端：
++
++```python
++from client import initialize_file_memory, update_file_descriptions, process_failed_files
++
++# 初始化FileMemory
++file_memory = initialize_file_memory(
++    project_dir="/path/to/project",
++    model_name="gpt-4o",
++    temperature=0.7
++)
++
++# 更新文件描述
++update_file_descriptions(file_memory)
++
++# 处理失败文件
++process_failed_files(file_memory)
++```
++
++## 工作原理
++
++FileMemory客户端的工作流程如下：
++
++1. **初始化**：创建AI配置和Git配置，初始化GitManager和FileMemory实例
++2. **文件变更检测**：
++   - 获取所有项目文件
++   - 检查Git历史，找出自上次运行以来变更的文件
++   - 对于首次运行，处理所有文件
++3. **批量处理**：
++   - 将文件按批次分组，避免处理过大的文本块
++   - 每个批次包含多个文件，但总行数和字符数不超过限制
++4. **描述生成**：
++   - 调用AI模型分析文件内容
++   - 为每个文件生成简短描述，包括主要功能、关键类/函数和与其他文件的交互
++5. **结果保存**：
++   - 将生成的描述保存到 `.eng/memory/file_details.txt`
++   - 记录当前的Git提交ID，用于下次比较
++
++## 输出文件
++
++FileMemory生成的主要文件：
++
++- `.eng/memory/file_details.txt`：包含所有文件的描述
++- `.eng/memory/git_id`：保存最后处理时的Git提交ID
++- `.eng/memory/failed_files.json`：记录处理失败的文件列表
++
++## 处理失败文件
++
++如果某些文件无法生成描述（可能是由于模型限制或临时错误），这些文件会被记录到失败文件列表中，可以通过以下命令单独处理：
++
++```bash
++bella-file-memory --failed-only
++```
++
++## 注意事项
++
++- FileMemory客户端仅使用GitManager，不依赖LogManager，可以独立于主工作流运行
++- 建议定期运行文件记忆更新，特别是在项目有重要更改时
++- 较大的代码库首次处理可能需要一些时间，后续增量更新会更快
++- 使用更强大的模型（如gpt-4o）通常会提供更准确的文件描述
++
++## 故障排除
++
++- **API错误**：确保已正确设置OPENAI_API_KEY环境变量或通过命令行参数提供
++- **空描述**：检查文件格式是否被支持，尝试使用更强大的模型
++- **描述不准确**：尝试调整温度参数，或者考虑手动编辑文件描述
++- **Git相关错误**：确保项目是一个有效的Git仓库，并且可以访问远程仓库（如果需要）
+```
+
+Now, let's add an update to the `client/__init__.py` to export the necessary functions:
+
+```diff
+--- client/__init__.py
++++ client/__init__.py
+@@ -1,3 +1,5 @@
+ """Client package for running the WorkflowEngine from the terminal."""
+ 
+ # Export file memory functions for programmatic use
++from client.file_memory_client import initialize_file_memory, update_file_descriptions, process_failed_files
++
+```
+
+With these additions, we now have:
+
+1. Updated the main project README.md to include information about the FileMemory client
+2. Created a detailed README_FILE_MEMORY.md in the client directory with comprehensive documentation about:
+   - Features and benefits of FileMemory
+   - Installation instructions
+   - Usage instructions (CLI, Python module, and scripting)
+   - Supported command line arguments with examples
+   - Programmatic usage examples
+   - Working principles
+   - Output file descriptions
+   - Handling failed files
+   - Notes and troubleshooting tips
+3. Updated the client/__init__.py to properly export the FileMemory functions
+
+These documentation files provide both a high-level overview and detailed instructions for users to effectively utilize the FileMemory client in different scenarios.
+
+This concludes a fully working implementation.

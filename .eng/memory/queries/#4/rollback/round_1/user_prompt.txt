@@ -1,0 +1,1189 @@
+# 项目文件描述
+
+
+- README.md: 项目主要说明文档，介绍bella-issues-bot的功能和使用方法。包含项目简介、主要功能、记忆与上下文管理系统介绍、安装方法、使用方法和环境变量配置说明。
+
+- client/__init__.py: Client包的初始化文件，用于从终端运行WorkflowEngine。导出了file_memory_client模块中的initialize_file_memory、update_file_descriptions和process_failed_files函数供编程使用。
+
+- client/cli.py: WorkflowEngine的命令行接口，提供解析命令行参数的功能。包含parse_args、get_requirement_text和build_config_from_args三个主要函数，支持统一和独立的模型配置选项。
+
+- client/terminal.py: WorkflowEngine的终端入口点，提供命令行运行引擎的功能。主要函数run_workflow_from_terminal解析命令行参数、获取需求文本、构建配置并运行工作流引擎，支持从环境变量加载配置。
+
+- client/runner.py: WorkflowEngine的编程API，提供在Python脚本中使用的简化接口。包含run_workflow函数，支持统一的模型和温度设置，以及各种配置选项。
+
+- client/file_memory_client.py: 一个独立的客户端模块，用于初始化和管理FileMemory，仅使用GitManager而不依赖LogManager。提供了CLI和编程接口，实现了文件描述的更新功能。包含initialize_file_memory、update_file_descriptions等关键函数。支持命令行参数配置和环境变量加载。
+
+- core/workflow_engine.py: 工作流引擎核心类，协调版本管理、日志管理和AI交互。实现了处理用户需求的完整流程，支持代码生成和聊天两种工作模式，包含环境设置、清理和决策分析功能。
+
+- pyproject.toml: 项目配置文件，定义bella-issues-bot的元数据、依赖项和工具配置。包含项目版本、描述、作者等信息，以及Python依赖库配置、代码格式化工具设置。是项目构建和包管理的核心配置文件。
+
+- scripts/init_file_memory.sh: 一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
+
+- scripts/run_bot.sh: 启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
+
+
+# 文件内容
+
+
+
+```
+File: README.md
+1 # bella-issues-bot
+2 
+3 ## 项目简介
+4 
+5 bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：
+6 
+7 1. **个人开发助手模式**：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。
+8 2. **GitHub自动化模式**：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。
+9 
+10 通过对项目结构的深入理解和强大的代码生成能力，bella-issues-bot 能够显著提高开发效率，减少重复工作，让您专注于更有创造性的任务。
+11 
+12 ## 主要功能
+13 
+14 - **需求分析**：自动理解和分解用户的功能需求
+15 - **代码生成**：根据需求生成符合项目风格的代码
+16 - **版本管理**：与Git集成，支持分支创建和代码提交
+17 - **记忆系统**：记录项目文件描述和操作历史，提供上下文感知能力
+18 
+19 ## 记忆与上下文管理
+20 
+21 bella-issues-bot 配备了强大的记忆系统，由三个核心组件构成：
+22 
+23 ### 1. 日志管理 (LogManager)
+24 
+25 LogManager 负责记录每次交互的完整历史，包括：
+26 - 系统提示词和用户需求
+27 - AI响应内容
+28 - 文件修改记录和差异对比
+29 
+30 这些日志按issue和轮次组织，支持历史追溯和问题诊断。每轮交互都会生成详细日志，便于追踪AI的决策过程和代码修改历史。
+31 
+32 ### 2. 版本管理 (VersionManager)
+33 
+34 VersionManager 提供智能的版本控制功能：
+35 - 自动提取历史轮次的需求和响应
+36 - 生成格式化的历史执行记录作为上下文
+37 - 分析当前需求与历史需求的关系
+38 - 根据需要执行版本回退操作
+39 
+40 系统会分析新需求与先前修改的关系，判断是否需要回滚，确保代码修改的连贯性和一致性。
+41 
+42 ### 3. 文件记忆 (FileMemory)
+43 
+44 FileMemory 模块为项目的每个文件维护详细描述：
+45 - 自动生成文件功能、结构和关系描述
+46 - 跟踪文件变更，更新受影响文件的描述
+47 - 提供上下文相关的文件选择
+48 - 支持配置忽略文件，默认包含项目的.gitignore，支持自定义添加.eng/.engignore
+49 
+50 这使得AI助手能够理解整个代码库的结构和功能，在修改代码时考虑到更广泛的项目上下文。
+51 
+52 ## 安装方法
+53 
+54 使用pip安装：
+55 
+56 ```bash
+57 pip install bella-issues-bot
+58 ```
+59 
+60 ## 使用方法
+61 
+62 bella-issues-bot 提供了多种使用方式：
+63 
+64 ### 个人开发模式
+65 
+66 在日常开发中，您可以通过命令行界面或编程API使用bella-issues-bot：
+67 
+68 #### 命令行使用
+69 
+70 ```bash
+71 bella-issues-bot --issue-id <问题ID> --requirement "你的需求描述"
+72 ```
+73 
+74 更多高级选项和详细使用说明，请参考[客户端文档](./client/README.md)。
+75 
+76 #### 编程API使用
+77 
+78 ```python
+79 from client.runner import run_workflow
+80 
+81 run_workflow(
+82     issue_id=42,
+83     requirement="创建一个简单的README文件",
+84     core_temperature=0.7
+85 )
+86 ```
+87 
+88 ## 环境变量配置
+89 
+90 工具会读取以下环境变量：
+91 
+92 - `OPENAI_API_KEY`: OpenAI API密钥
+93 - `OPENAI_API_BASE`: OpenAI API基础URL
+94 - `GITHUB_REMOTE_URL`: GitHub远程仓库URL
+95 - `GITHUB_TOKEN`: GitHub身份验证令牌
+96 - 在项目文件的.eng/目录下创建 .engignore文件，示例[examples](./.engignore.example)
+97 
+98 ## 示例
+99 
+100 可以在[examples](./examples/)目录下找到使用示例。
+101 
+102 ### 文件记忆初始化
+103 
+104 在项目根目录执行 `bella-file-memory` 可以初始化文件记忆系统，它会自动分析项目中的文件并生成描述信息。
+105 更多详细信息请参阅[文件记忆客户端文档](./client/README_FILE_MEMORY.md)。
+106
+```
+
+
+
+
+```
+File: client/__init__.py
+1 """Client package for running the WorkflowEngine from the terminal."""
+2 
+3 # Export file memory functions for programmatic use
+4 from client.file_memory_client import initialize_file_memory, update_file_descriptions, process_failed_files
+5
+```
+
+
+
+
+```
+File: client/cli.py
+1 """
+2 Command-line interface for the WorkflowEngine.
+3 Provides functionality to parse command-line arguments and run the engine.
+4 """
+5 
+6 import argparse
+7 import os
+8 import sys
+9 from typing import Optional, Dict, Any
+10 
+11 
+12 def parse_args() -> argparse.Namespace:
+13     """Parse command-line arguments for the WorkflowEngine."""
+14     parser = argparse.ArgumentParser(
+15         description="Run the WorkflowEngine to process user requirements"
+16     )
+17 
+18     # Required arguments
+19     parser.add_argument(
+20         "--project-dir", 
+21         "-p",
+22         type=str, 
+23         default=os.path.abspath(os.getcwd()),
+24         help="Path to the project directory (default: current directory)"
+25     )
+26     parser.add_argument(
+27         "--issue-id", 
+28         "-i",
+29         type=int, 
+30         required=True,
+31         help="The ID of the issue being processed"
+32     )
+33     parser.add_argument(
+34         "--requirement", 
+35         "-r",
+36         type=str, 
+37         help="The user requirement text"
+38     )
+39     parser.add_argument(
+40         "--requirement-file", 
+41         "-f",
+42         type=str, 
+43         help="Path to file containing the user requirement"
+44     )
+45 
+46     # Optional arguments for WorkflowEngineConfig
+47     # 统一模型配置
+48     parser.add_argument(
+49         "--model", 
+50         "-m",
+51         type=str, 
+52         help="Model to use for both core and data operations (优先级高于单独配置)"
+53     )
+54     parser.add_argument(
+55         "--temperature",
+56         "-t",
+57         type=float, 
+58         help="Temperature for both core and data models (优先级高于单独配置)"
+59     )
+60     
+61     # 独立模型配置
+62     parser.add_argument(
+63         "--core-model", 
+64         "--cm",
+65         type=str, 
+66         default="gpt-4o",
+67         help="Model to use for core AI operations (当未设置--model时使用)"
+68     )
+69     parser.add_argument(
+70         "--data-model", 
+71         "--dm",
+72         type=str, 
+73         default="gpt-4o",
+74         help="Model to use for data operations (当未设置--model时使用)"
+75     )
+76     parser.add_argument(
+77         "--core-temperature",
+78         "--ct",
+79         type=float, 
+80         default=0.7,
+81         help="Temperature for core model (当未设置--temperature时使用)"
+82     )
+83     parser.add_argument(
+84         "--data-temperature",
+85         "--dt",
+86         type=float, 
+87         default=0.7,
+88         help="Temperature for data model (当未设置--temperature时使用)"
+89     )
+90     parser.add_argument(
+91         "--max-retry", 
+92         "--retry",
+93         type=int, 
+94         default=3,
+95         help="Maximum number of retry attempts"
+96     )
+97     parser.add_argument(
+98         "--default-branch", 
+99         "--branch",
+100         type=str, 
+101         default="main",
+102         help="Default branch name"
+103     )
+104     parser.add_argument(
+105         "--mode",
+106         "-md",
+107         type=str,
+108         choices=["client", "bot"],
+109         default="client",
+110         help="Operation mode: 'client' or 'bot'"
+111     )
+112     parser.add_argument(
+113         "--base-url",
+114         "-u",
+115         type=str,
+116         help="Base URL for API calls"
+117     )
+118     parser.add_argument(
+119         "--api-key",
+120         "-k",
+121         type=str,
+122         help="API key for authentication"
+123     )
+124     parser.add_argument(
+125         "--github-remote-url",
+126         "--git-url",
+127         type=str,
+128         help="GitHub remote repository URL"
+129     )
+130     parser.add_argument(
+131         "--github-token",
+132         "--git-token",
+133         type=str,
+134         help="GitHub authentication token"
+135     )
+136     
+137     return parser.parse_args()
+138 
+139 
+140 def get_requirement_text(args: argparse.Namespace) -> Optional[str]:
+141     """Get requirement text from arguments or file."""
+142     if args.requirement:
+143         return args.requirement
+144     elif args.requirement_file:
+145         try:
+146             with open(args.requirement_file, 'r', encoding='utf-8') as file:
+147                 return file.read()
+148         except IOError as e:
+149             print(f"Error reading requirement file: {e}", file=sys.stderr)
+150             return None
+151     else:
+152         print("No requirement specified. Use --requirement or --requirement-file", file=sys.stderr)
+153         return None
+154 
+155 
+156 def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+157     """Build WorkflowEngineConfig parameters from command line arguments."""
+158     
+159     # 处理统一的模型和温度配置
+160     core_model = args.core_model
+161     data_model = args.data_model
+162     core_temperature = args.core_temperature
+163     data_temperature = args.data_temperature
+164     
+165     # 如果设置了统一模型，则覆盖个别设置
+166     if args.model:
+167         core_model = args.model
+168         data_model = args.model
+169         
+170     # 如果设置了统一温度，则覆盖个别设置
+171     if args.temperature is not None:
+172         core_temperature = args.temperature
+173         data_temperature = args.temperature
+174     
+175     config_params = {
+176         "project_dir": args.project_dir,
+177         "issue_id": args.issue_id,
+178         "core_model": core_model,
+179         "data_model": data_model,
+180         "core_template": core_temperature,  # Note: using template to match original param name
+181         "data_template": data_temperature,  # Note: using template to match original param name
+182         "max_retry": args.max_retry, 
+183         "default_branch": args.default_branch,
+184         "mode": args.mode,
+185     }
+186     
+187     # Add optional parameters if they're specified
+188     if args.base_url:
+189         config_params["base_url"] = args.base_url
+190     if args.api_key:
+191         config_params["api_key"] = args.api_key
+192     if args.github_remote_url:
+193         config_params["github_remote_url"] = args.github_remote_url
+194     if args.github_token:
+195         config_params["github_token"] = args.github_token
+196         
+197     return config_params
+198
+```
+
+
+
+
+```
+File: client/terminal.py
+1 """
+2 Terminal entrypoint for the WorkflowEngine.
+3 Provides functionality to run the engine from terminal with command-line arguments.
+4 """
+5 import logging
+6 import os
+7 import sys
+8 from dotenv import load_dotenv
+9 
+10 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+11 from client.cli import parse_args, get_requirement_text, build_config_from_args
+12 from core.log_config import setup_logging
+13 
+14 
+15 def run_workflow_from_terminal() -> str:
+16     """
+17     Main entry point for running the workflow engine from terminal.
+18     Parses command line arguments and runs the workflow engine.
+19     """
+20     # Load environment variables from .env file if present
+21     load_dotenv()
+22     
+23     # Parse command line arguments
+24     args = parse_args()
+25     
+26     # Get requirement text
+27     requirement = get_requirement_text(args)
+28     if not requirement:
+29         sys.exit(1)
+30     
+31     # Build config from arguments
+32     config_params = build_config_from_args(args)
+33     
+34     # Try to get API key from environment if not provided as argument
+35     if "api_key" not in config_params and os.environ.get("OPENAI_API_KEY"):
+36         config_params["api_key"] = os.environ.get("OPENAI_API_KEY")
+37     
+38     # Create the workflow engine config
+39     config = WorkflowEngineConfig(**config_params)
+40     
+41     # Initialize and run the workflow engine
+42     engine = WorkflowEngine(config)
+43     response = engine.process_requirement(requirement)
+44     
+45     # Print the response to the terminal if available
+46     if response:
+47         print(f"\nResponse:\n{response}")
+48     
+49     return response if response else ""
+50 
+51 
+52 if __name__ == "__main__":
+53     setup_logging(log_level=logging.INFO)
+54     response = run_workflow_from_terminal()
+55 
+56
+```
+
+
+
+
+```
+File: client/runner.py
+1 """
+2 Programmatic API for running the WorkflowEngine.
+3 Provides a simplified interface for use in Python scripts.
+4 """
+5 
+6 import os
+7 from typing import Optional, Dict, Any, Union
+8 
+9 from dotenv import load_dotenv
+10 
+11 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+12 
+13 
+14 def run_workflow(
+15     issue_id: int,
+16     requirement: str,
+17     project_dir: Optional[str] = None,
+18     model: Optional[str] = None,  # 统一的模型设置
+19     core_model: Optional[str] = "gpt-4o",
+20     data_model: Optional[str] = None,  # 默认与core_model相同
+21     temperature: Optional[float] = None,  # 统一的温度设置
+22     core_temperature: float = 0.7,
+23     data_temperature: float = 0.7,
+24     max_retry: int = 3,
+25     default_branch: str = "main",
+26     mode: str = "client",
+27     base_url: Optional[str] = None,
+28     api_key: Optional[str] = None,
+29     github_remote_url: Optional[str] = None,
+30     github_token: Optional[str] = None,
+31     **kwargs: Dict[str, Any]
+32 ) -> None:
+33     """Run the WorkflowEngine with the given configuration."""
+34     # Load environment variables
+35     load_dotenv()
+36     
+37     # Use current directory if no project_dir specified
+38     if project_dir is None:
+39         project_dir = os.getcwd()
+40     
+41     # 处理统一的模型配置
+42     if model is not None:
+43         core_model = model
+44         data_model = model
+45     
+46     # 如果未指定data_model，则默认与core_model相同
+47     if data_model is None:
+48         data_model = core_model
+49     
+50     # 处理统一的温度配置
+51     if temperature is not None:
+52         core_temperature = temperature
+53         data_temperature = temperature
+54     
+55     # Create config with provided parameters
+56     config = WorkflowEngineConfig(
+57         project_dir=project_dir, issue_id=issue_id, 
+58         core_model=core_model, data_model=data_model,
+59         core_template=core_temperature, data_template=data_temperature,
+60         max_retry=max_retry, default_branch=default_branch, mode=mode, 
+61         base_url=base_url, api_key=api_key, github_remote_url=github_remote_url,
+62         github_token=github_token
+63     )
+64     
+65     # Run the workflow engine
+66     engine = WorkflowEngine(config)
+67     response = engine.process_requirement(requirement)
+68     
+69     return response
+70
+```
+
+
+
+
+```
+File: client/file_memory_client.py
+1 """
+2 File Memory Client
+3 
+4 A standalone client for initializing and managing FileMemory using only GitManager.
+5 This module provides both CLI and programmatic interfaces for updating file descriptions.
+6 """
+7 
+8 import argparse
+9 import logging
+10 import os
+11 import sys
+12 from typing import Dict, List, Optional
+13 
+14 from dotenv import load_dotenv
+15 
+16 from core.ai import AIConfig
+17 from core.file_memory import FileMemory, FileMemoryConfig
+18 from core.git_manager import GitManager, GitConfig
+19 from core.log_config import setup_logging, get_logger
+20 
+21 logger = get_logger(__name__)
+22 
+23 
+24 def initialize_file_memory(
+25     project_dir: str,
+26     model_name: str = "gpt-4o",
+27     temperature: float = 0.7,
+28     api_key: Optional[str] = None,
+29     base_url: Optional[str] = None,
+30     remote_url: Optional[str] = None,
+31     auth_token: Optional[str] = None,
+32 ) -> FileMemory:
+33     """
+34     Initialize FileMemory using GitManager without LogManager.
+35     
+36     Args:
+37         project_dir: Path to the project directory
+38         model_name: AI model to use for generating file descriptions
+39         temperature: Temperature setting for AI responses
+40         api_key: API key for AI service (will use env var if None)
+41         base_url: Base URL for AI service (will use default if None)
+42         remote_url: Git remote URL (will use env var if None)
+43         auth_token: Git authentication token (will use env var if None)
+44         
+45     Returns:
+46         Initialized FileMemory instance
+47     """
+48     # Create AI config
+49     ai_config = AIConfig(
+50         model_name=model_name,
+51         temperature=temperature,
+52         api_key=api_key,
+53         base_url=base_url
+54     )
+55     
+56     # Create Git config
+57     git_config = GitConfig(
+58         repo_path=project_dir,
+59         remote_url=remote_url or os.getenv("GIT_REMOTE_URL"),
+60         auth_token=auth_token or os.getenv("GITHUB_TOKEN")
+61     )
+62     
+63     # Initialize Git manager
+64     git_manager = GitManager(config=git_config)
+65     
+66     # Initialize and return FileMemory
+67     file_memory_config = FileMemoryConfig(
+68         project_dir=project_dir,
+69         git_manager=git_manager,
+70         ai_config=ai_config,
+71         log_manager=None  # Explicitly set to None as per requirements
+72     )
+73     
+74     return FileMemory(config=file_memory_config)
+75 
+76 
+77 def update_file_descriptions(file_memory: FileMemory) -> None:
+78     """
+79     Update file descriptions using the given FileMemory instance.
+80     
+81     Args:
+82         file_memory: Initialized FileMemory instance
+83         
+84     Returns:
+85         Dictionary mapping file paths to their descriptions
+86     """
+87     return file_memory.update_file_details()
+88 
+89 
+90 def process_failed_files(file_memory: FileMemory) -> Dict[str, str]:
+91     """
+92     Process previously failed files to generate their descriptions.
+93     
+94     Args:
+95         file_memory: Initialized FileMemory instance
+96         
+97     Returns:
+98         Dictionary mapping file paths to their descriptions
+99     """
+100     return file_memory.process_failed_files()
+101 
+102 
+103 def main() -> None:
+104     """Command line interface for FileMemory client."""
+105     # Load environment variables
+106     load_dotenv()
+107     
+108     # Parse command line arguments
+109     parser = argparse.ArgumentParser(description="FileMemory Client - Update file descriptions for a project")
+110     parser.add_argument("-d", "--directory", default=".", help="Project directory path (default: current directory)")
+111     parser.add_argument("-m", "--model", default="gpt-4o", help="AI model name (default: gpt-4o)")
+112     parser.add_argument("-t", "--temperature", type=float, default=0.7, help="AI temperature (default: 0.7)")
+113     parser.add_argument("-k", "--api-key", help="OpenAI API key (defaults to OPENAI_API_KEY env var)")
+114     parser.add_argument("-u", "--base-url", help="Base URL for API calls (optional)")
+115     parser.add_argument("--git-url", help="Git remote URL (defaults to GIT_REMOTE_URL env var)")
+116     parser.add_argument("--git-token", help="Git auth token (defaults to GITHUB_TOKEN env var)")
+117     parser.add_argument("-l", "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="Logging level")
+118     parser.add_argument("--failed-only", action="store_true", help="Process only previously failed files")
+119     args = parser.parse_args()
+120     
+121     # Setup logging
+122     setup_logging(log_level=getattr(logging, args.log_level))
+123     
+124     # Get absolute path for project directory
+125     project_dir = os.path.abspath(args.directory)
+126     if not os.path.isdir(project_dir):
+127         logger.error(f"Project directory does not exist: {project_dir}")
+128         sys.exit(1)
+129     
+130     logger.info(f"Initializing FileMemory for project: {project_dir}")
+131     
+132     # Initialize FileMemory
+133     file_memory = initialize_file_memory(
+134         project_dir=project_dir,
+135         model_name=args.model,
+136         temperature=args.temperature,
+137         api_key=args.api_key,
+138         base_url=args.base_url,
+139         remote_url=args.git_url,
+140         auth_token=args.git_token
+141     )
+142     
+143     # Update file details or process failed files
+144     if args.failed_only:
+145         process_failed_files(file_memory)
+146         logger.info("Processed failed files")
+147     else:
+148         update_file_descriptions(file_memory)
+149         logger.info("Updated descriptions files")
+150 
+151 
+152 if __name__ == "__main__":
+153     main()
+154
+```
+
+
+
+
+```
+File: core/workflow_engine.py
+1 import os
+2 import shutil
+3 import tempfile
+4 import uuid
+5 from dataclasses import dataclass
+6 from typing import Optional
+7 
+8 from core.ai import AIConfig
+9 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+10 from core.code_engineer import CodeEngineer, CodeEngineerConfig
+11 from core.decision import DecisionProcess
+12 from core.diff import Diff
+13 from core.file_memory import FileMemory, FileMemoryConfig
+14 from core.file_selector import FileSelector
+15 from core.git_manager import GitManager, GitConfig
+16 from core.log_config import get_logger
+17 from core.log_manager import LogManager, LogConfig
+18 from core.prompt_generator import PromptGenerator, PromptData
+19 from core.version_manager import VersionManager
+20 
+21 logger = get_logger(__name__)
+22 
+23 @dataclass
+24 class WorkflowEngineConfig:
+25     project_dir: str
+26     issue_id:int
+27     core_model:str = "gpt-4o"
+28     data_model:str = "gpt-4o"
+29     core_template: float = 0.7
+30     data_template: float = 0.7
+31     max_retry: int = 3,
+32     default_branch: str = "main"
+33     mode: str = "client" # ["client", "bot"] bot模式下，每次进行工作时，会hard reset到issues的最新分支上
+34     base_url: Optional[str] = None
+35     api_key: Optional[str] = None
+36     github_remote_url: Optional[str] =None
+37     github_token: Optional[str] = None
+38 
+39 
+40 class WorkflowEngine:
+41     CODE_TIMES = 0
+42     CHAT_TIMES = 0
+43     """
+44     工作流引擎，协调版本管理、日志管理和AI交互
+45     """
+46     def __init__(self, config: WorkflowEngineConfig):
+47         """
+48         初始化工作流引擎
+49         
+50         Args:
+51             config: 工作流配置
+52         """
+53         self.CODE_TIMES = 0
+54         self.CHAT_TIMES = 0
+55         # 存储原始配置
+56         self.original_config = config
+57         
+58         # 根据模式设置工作目录
+59         if config.mode == "bot":
+60             # 创建临时目录作为工作区
+61             self.temp_dir = os.path.join(
+62                 tempfile.gettempdir(), 
+63                 f"bella-bot-{config.issue_id}-{str(uuid.uuid4())[:8]}"
+64             )
+65             os.makedirs(self.temp_dir, exist_ok=True)
+66             # 更新配置以使用临时目录
+67             self.config = WorkflowEngineConfig(
+68                 project_dir=self.temp_dir,
+69                 **{k: v for k, v in vars(config).items() if k != 'project_dir'}
+70             )
+71             logger.info(f"Bot模式：创建临时工作目录 {self.temp_dir}")
+72         else:
+73             # 客户端模式直接使用指定的目录
+74             self.config = config
+75             self.temp_dir = None
+76 
+77         self.project_dir = os.path.abspath(self.config.project_dir)
+78         # 创建AI配置
+79         self.core_ai_config = AIConfig(
+80             model_name=config.core_model,
+81             temperature=config.core_template,
+82             base_url=config.base_url,
+83             api_key=config.api_key
+84         )
+85         
+86         self.data_ai_config = AIConfig(
+87             model_name=config.data_model,
+88             temperature=config.data_template,
+89             base_url=config.base_url,
+90             api_key=config.api_key
+91         )
+92         
+93         # 创建Git配置
+94         self.git_config = GitConfig(
+95             repo_path=self.project_dir,
+96             remote_url=config.github_remote_url or os.getenv("GIT_REMOTE"),
+97             auth_token=config.github_token or os.getenv("GITHUB_TOKEN"),
+98             default_branch=config.default_branch
+99         )
+100         
+101         # 创建日志配置
+102         self.log_config = LogConfig(
+103             project_dir=self.project_dir,
+104             issue_id=config.issue_id,
+105             mode=config.mode
+106         )
+107         
+108         # 初始化管理器
+109         self.git_manager = GitManager(config=self.git_config)
+110         self.log_manager = LogManager(config=self.log_config)
+111         
+112         # 初始化文件记忆管理，传入log_manager
+113         self.file_memory = FileMemory(
+114             config=FileMemoryConfig(
+115                 git_manager=self.git_manager,
+116                 ai_config=self.core_ai_config,
+117                 project_dir=self.project_dir,
+118                 log_manager=self.log_manager
+119             )
+120         )
+121         self.version_manager = VersionManager(
+122             issue_id=config.issue_id,
+123             ai_config=self.core_ai_config,
+124             log_manager=self.log_manager,
+125             git_manager=self.git_manager,
+126             file_memory=self.file_memory
+127         )
+128         self.file_selector = FileSelector(
+129             self.project_dir,
+130             self.config.issue_id,
+131             ai_config=self.core_ai_config
+132         )
+133 
+134         # 初始化代码工程师
+135         self.code_engineer_config = CodeEngineerConfig(
+136             project_dir=self.project_dir,
+137             ai_config=self.core_ai_config
+138         )
+139         self.engineer = CodeEngineer(
+140             self.code_engineer_config,
+141             self.log_manager,
+142             Diff(self.data_ai_config)
+143         )
+144         
+145         # 初始化聊天处理器
+146         self.chat_processor = ChatProcessor(
+147             ai_config=self.core_ai_config,
+148             log_manager=self.log_manager,
+149             config=ChatProcessorConfig(system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。")
+150         )
+151         
+152         # 初始化决策环境
+153         self.decision_env = DecisionProcess(
+154             ai_config=self.core_ai_config,
+155             version_manager=self.version_manager
+156         )
+157     
+158     def process_requirement(self, user_requirement: str) -> Optional[str]:
+159         """
+160         处理用户需求
+161         
+162         Args:
+163             user_requirement: 用户需求
+164 
+165         Returns:
+166             str: 处理结果的响应文本
+167         """
+168         try:
+169             # 初始化环境
+170             self._setup_environment()
+171             
+172             response = self._process_requirement_internal(user_requirement)
+173             
+174             # 如果是bot模式，在结束时清理临时目录
+175             if self.config.mode == "bot":
+176                 self._cleanup_environment()
+177             
+178             return response
+179         except Exception as e:
+180             logger.error(f"处理需求时发生错误: {str(e)}")
+181             raise
+182 
+183     def _setup_environment(self) -> None:
+184         """
+185         根据模式设置工作环境
+186         """
+187         if self.config.mode == "bot":
+188             try:
+189                 # 重置到issue对应的分支
+190                 self.git_manager.reset_to_issue_branch(self.config.issue_id)
+191                 logger.info(f"成功初始化Bot模式环境，工作目录: {self.temp_dir}")
+192             except Exception as e:
+193                 logger.error(f"初始化Bot模式环境失败: {str(e)}")
+194                 self._cleanup_environment()
+195                 raise
+196         current_round = self.log_manager.get_current_round()
+197 
+198         # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+199         if self.file_memory and current_round > 1:
+200             self.file_memory.update_file_details()
+201             logger.info("已更新文件详细信息")
+202         
+203     def _cleanup_environment(self) -> None:
+204         """
+205         清理工作环境，删除临时目录
+206         """
+207         if self.config.mode == "bot" and self.temp_dir and os.path.exists(self.temp_dir):
+208             try:
+209                 # 关闭git仓库连接
+210                 if hasattr(self, 'git_manager') and self.git_manager:
+211                     self.git_manager.delete_local_repository()
+212                 
+213                 # 删除临时目录
+214                 shutil.rmtree(self.temp_dir, ignore_errors=True)
+215                 logger.info(f"已清理临时工作目录: {self.temp_dir}")
+216             except Exception as e:
+217                 logger.warning(f"清理临时目录时出错: {str(e)}")
+218                 # 即使清理失败也不抛出异常，让主流程继续
+219 
+220     def _process_requirement_internal(self, user_requirement: str) -> Optional[str]:
+221         """
+222         内部处理需求的方法
+223         
+224         Args:
+225             user_requirement: 用户需求
+226             
+227         Returns:
+228             str: 处理结果
+229         """
+230         # 先通过决策环境分析需求类型
+231         decision_result = self.decision_env.analyze_requirement(user_requirement)
+232         
+233         logger.info(f"决策结果: 是否需要修改代码={decision_result.needs_code_modification}, "
+234                     f"理由={decision_result.reasoning}")
+235         
+236         if decision_result.needs_code_modification:
+237             # 执行代码修改流程
+238             response = self._run_code_generation_workflow(user_requirement)
+239         else: 
+240             # 执行对话流程
+241             response = self._run_chat_workflow(user_requirement)
+242         
+243         # 如果是Bot模式且有GitHub配置，自动回复到issue
+244         if self.config.mode == "bot":
+245             try:
+246                 self.version_manager.finalize_changes(mode=self.config.mode, comment_text=response)
+247                 logger.info(f"更改已经推送到远端，并添加了Issue评论")
+248             except Exception as e:
+249                 logger.error(f"添加Issue评论时出错: {str(e)}")
+250                 
+251         return response
+252     
+253     def _run_code_generation_workflow(self, user_requirement: str) -> Optional[str]:
+254         """
+255         执行代码生成流程，基于example_code_generate.py的逻辑
+256         
+257         Args:
+258             user_requirement: 用户需求
+259             
+260         Returns:
+261             str: 处理结果
+262         """
+263         logger.info("开始执行代码生成流程")
+264 
+265         # 确定当前版本
+266         requirement, history = self.version_manager.ensure_version_and_generate_context(user_requirement)
+267 
+268         # 生成提示词
+269         user_prompt = self._get_user_prompt(requirement, history)
+270 
+271         # 根据提示词修改代码
+272         success, response = self.engineer.process_prompt(prompt=user_prompt)
+273 
+274         # 提交更改
+275         if success:
+276             return response
+277         else:
+278             self.CODE_TIMES += 1
+279             if self.CODE_TIMES >= self.config.max_retry:
+280                 logger.error("code workflow超过最大重试次数")
+281                 return self._run_chat_workflow(user_requirement)
+282             else:
+283                 return self._run_code_generation_workflow(user_requirement)
+284     
+285     def _run_chat_workflow(self, user_requirement: str) -> Optional[str]:
+286         """
+287         执行聊天流程，基于example_chat_process.py的逻辑
+288         
+289         Args:
+290             user_requirement: 用户需求
+291             
+292         Returns:
+293             str: 处理结果
+294         """
+295         logger.info("开始执行聊天回复流程")
+296 
+297         history = self.version_manager.get_formatted_history()
+298 
+299         # 生成提示词
+300         user_prompt = self._get_user_prompt(user_requirement, history)
+301         
+302         # 处理聊天请求
+303         response = self.chat_processor.process_chat(user_prompt)
+304 
+305         if(response):
+306             return response
+307         else:
+308             self.CHAT_TIMES += 1
+309             if self.CHAT_TIMES >= self.config.max_retry:
+310                 logger.error("chat workflow超过最大重试次数")
+311                 return None
+312             else:
+313                 return self._run_chat_workflow(user_requirement)
+314 
+315     def _get_user_prompt(self, requirement: str, history: str) -> str:
+316         # 选择文件
+317         files = self.file_selector.select_files_for_requirement(requirement)
+318         descriptions = FileMemory.get_selected_file_descriptions(self.project_dir, files)
+319 
+320         # 准备提示词数据
+321         data = PromptData(
+322             requirement=requirement,
+323             project_dir=self.project_dir,
+324             steps=history,
+325             files=files,
+326             file_desc=descriptions
+327         )
+328 
+329         # 生成提示词
+330         return PromptGenerator.generatePrompt(data)
+331
+```
+
+
+
+
+```
+File: pyproject.toml
+1 [tool.poetry]
+2 name = "bella-issues-bot"
+3 version = "0.1.1"
+4 description = "bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：个人开发助手模式：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。GitHub自动化模式：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。"
+5 authors = ["saizhuolin"]
+6 license = "MIT"
+7 readme = "README.md"
+8 homepage = "https://github.com/szl97/bella-issues-bot"
+9 repository = "https://github.com/szl97/bella-issues-bot"
+10 documentation = "https://github.com/szl97/bella-issues-bot"
+11 packages = [
+12     {include = "core"},
+13     {include = "client"}
+14 ]
+15 include = [
+16     "system.txt"
+17 ]
+18 classifiers = [
+19   "Development Status :: 4 - Beta",
+20   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+21 ]
+22 
+23 [build-system]
+24 requires = ["poetry-core>=1.0.0"]
+25 build-backend = "poetry.core.masonry.api"
+26 
+27 [tool.poetry.dependencies]
+28 python = ">=3.10,<3.13"
+29 gitpython = "^3.1.40"
+30 PyGithub = "^2.1.1"
+31 langchain = ">=0.3.0,<0.4.0"
+32 langchain-openai = ">=0.1.0"
+33 langchain-core = ">=0.3.0,<0.4.0"
+34 langchain-community = ">=0.3.0,<0.4.0"
+35 python-dotenv = "^1.0.0"
+36 pydantic = "^2.5.0"
+37 openai = "^1.3.5"
+38 pytest = "^7.4.0"
+39 pathspec = ">=0.9.0"
+40 toml = ">=0.10.2"
+41 typing-extensions = ">=4.0.0"
+42 jinja2 = ">=3.1.0,<4.0.0"
+43 colorlog = ">=6.8.0,<7.0.0"
+44 colorama = ">=0.4.4"
+45 argparse = ">=1.4.0"
+46 pyyaml = ">=6.0"
+47 
+48 [tool.poetry.scripts]
+49 bella-issues-bot = 'client.terminal:run_workflow_from_terminal'
+50 bella-file-memory = 'client.file_memory_client:main'
+51 
+52 [tool.ruff]
+53 select = ["F", "E", "W", "I001"]
+54 show-fixes = false
+55 target-version = "py310"
+56 task-tags = ["TODO", "FIXME"]
+57 extend-ignore = ["E501", "E722"]
+58 
+59 [tool.black]
+60 target-version = ["py310"]
+61 
+62 [tool.ruff.isort]
+63 known-first-party = []
+64 known-third-party = []
+65 section-order = [
+66   "future",
+67   "standard-library",
+68   "third-party",
+69   "first-party",
+70   "local-folder",
+71 ]
+72 combine-as-imports = true
+73 split-on-trailing-comma = false
+74 lines-between-types = 1
+75
+```
+
+
+
+
+```
+File: scripts/init_file_memory.sh
+1 #!/bin/bash
+2 
+3 # Script to initialize file memory using GitManager (without LogManager)
+4 # This script helps to run the bella-file-memory command with common options
+5 
+6 show_help() {
+7     echo "Usage: $0 [options]"
+8     echo ""
+9     echo "Options:"
+10     echo "  -d, --directory DIR    Set project directory (default: current directory)"
+11     echo "  -m, --model MODEL      Set AI model (default: gpt-4o)"
+12     echo "  -t, --temp VALUE       Set temperature (default: 0.7)"
+13     echo "  -f, --failed-only      Process only previously failed files"
+14     echo "  -h, --help             Show this help message"
+15     echo ""
+16 }
+17 
+18 if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+19     show_help
+20     exit 0
+21 fi
+22 
+23 # Pass all arguments to the Python module
+24 python -m client.file_memory_client "$@"
+25 
+26 # Exit with the same status code as the Python command
+27 exit $?
+28
+```
+
+
+
+
+```
+File: scripts/run_bot.sh
+1 #!/bin/bash
+2 
+3 # 启动bella-issues-bot的帮助脚本
+4 # 此脚本简化了命令行参数的输入，便于快速使用
+5 # 支持简化的参数选项，调用Python客户端模块
+6 
+7 show_help() {
+8     echo "使用方法: $0 <issue-id> [选项] [需求文件路径]"
+9     echo ""
+10     echo "必需参数:"
+11     echo "  <issue-id>               问题ID（必填）"
+12     echo ""
+13     echo "选项:"
+14     echo "  -m, --model MODEL        同时设置core和data模型名称"
+15     echo "  -t, --temperature TEMP          同时设置core和data模型温度"
+16     echo "  --cm, --core-model MODEL 单独设置core模型名称"
+17     echo "  --dm, --data-model MODEL 单独设置data模型名称"
+18     echo "  --ct, --core-temperature TEMP   单独设置core模型温度"
+19     echo "  --dt, --data-temperature TEMP   单独设置data模型温度"
+20     echo "  -k, --key KEY            设置API密钥"
+21     echo "  -h, --help               显示此帮助信息"
+22     echo ""
+23     echo "示例:"
+24     echo "  $0 42 ./requirements.txt             # 使用文件中的需求"
+25     echo "  $0 42 -m gpt-4-turbo                # 设置所有模型为gpt-4-turbo"
+26     echo "  $0 42 -m gpt-4-turbo -t 0.9         # 设置所有模型为gpt-4-turbo，温度为0.9"
+27     echo "  $0 42 --cm gpt-4-turbo --dm gpt-3.5-turbo  # 分别设置不同模型"
+28     echo ""
+29 }
+30 
+31 # 检查是否请求帮助
+32 if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+33     show_help
+34     exit 0
+35 fi
+36 
+37 # 检查是否提供了issue-id参数
+38 if [ -z "$1" ] || [[ "$1" == -* ]]; then
+39     echo "错误: 必须提供issue-id作为第一个参数"
+40     show_help
+41     exit 1
+42 fi
+43 
+44 ISSUE_ID=$1
+45 shift  # 移除第一个参数，使其他参数可以按顺序处理
+46 
+47 # 检查最后一个参数是否是一个文件（不以连字符开头）
+48 ARGS=("$@")
+49 if [ ${#ARGS[@]} -gt 0 ] && [[ ! "${ARGS[-1]}" == -* ]] && [ -f "${ARGS[-1]}" ]; then
+50     python -m client.terminal -i $ISSUE_ID --requirement-file "${ARGS[-1]}" "${ARGS[@]:0:${#ARGS[@]}-1}"
+51 else
+52     python -m client.terminal -i $ISSUE_ID "$@"
+53 fi
+54
+```
+
+
+
+
+# 用户需求
+
+为了与GitHub更好地集成，提供一个客户端，为项目文件生成GitHub CICD，分为两个cicd。
+    一个是执行memory初始化的，配置为某一个分支push，分支默认为main，提供参数可以修改。
+    一个时执行workflowEngine的，配置为提issues和用户issues下回复comment时触发，将issues_id传入，所有环境变量都配置在github cicd的环境变量中带入。
+    提issues的时候，用户需求就是提的issues内容。提comment时，需求内容开头为 bella-issues-bot已处理：则代表是bella-issues-bot追加的不需要触发。
+    
+这是一个客户端工具，供其他项目安装和使用，通过pip install bella-issues-bot安装，用来为其他项目自动生成GitHub工作流配置文件。
+
+**关键要求:**
+1. CI/CD工作流应该使用模板生成，而非AI工程师手动编写
+2. 生成脚本应该指定配置写入CI/CD中
+3. 密钥类型的key应该在GitHub secret中配置
+4. file_memory命令需要提供完整的启动参数

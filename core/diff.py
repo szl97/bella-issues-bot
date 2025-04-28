@@ -7,13 +7,25 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from core.ai import AIAssistant, AIConfig
-from log_config import get_logger
+from core.log_config import get_logger
 
 logger = get_logger(__name__)
 
+class DiffInfo(BaseModel):
+    """存储diff信息的数据类"""
+    file_name: str = ""  # 文件路径
+    content: str = ""    # diff内容或新文件内容
+    file_content: str = ""  # 文件的原始内容（如果是修改文件）
+    is_create: bool = False  # 是否为新建文件
+    is_modify: bool = False  # 是否为修改文件
+    is_delete: bool = False  # 是否为删除文件
+
 
 class Diff:
-    """处理文件差异的类，使用 AI 模型生成新文件内容"""
+    """
+    处理Git diff格式的工具类
+    使用 AI 模型生成新文件内容
+    """
     
     def __init__(self, ai_config: AIConfig):
         """
@@ -159,7 +171,7 @@ class Diff:
                 
         return raw_diff_blocks
 
-    def process_diffs(self, diffs: List[Tuple[str, str, str]], project_dir: str) -> List[str]:
+    def process_diffs(self, diffs: List[Tuple[str, str, str]], project_dir: str) -> tuple[List[str], List[DiffInfo]]:
         """
         处理 diff 列表，使用 AI 模型生成新文件内容
         将同一个文件的多个 diff 合并后一起请求模型
@@ -172,6 +184,7 @@ class Diff:
             List[str]: 处理失败的文件列表
         """
         failed_files = []
+        diff_infos = []
         
         # 按文件路径分组，合并同一文件的多个 diff
         file_diffs = {}
@@ -181,7 +194,7 @@ class Diff:
             file_diffs[file_path_post].append((file_path_pre, content_or_diff))
         
         logger.info(f"将 {len(diffs)} 个 diff 合并为 {len(file_diffs)} 个文件的修改")
-        
+
         # 处理每个文件的所有 diff
         for file_path_post, file_changes in file_diffs.items():
             try:
@@ -196,7 +209,8 @@ class Diff:
                 
                 # 合并同一文件的所有 diff
                 combined_diff = "\n".join([change[1] for change in file_changes])
-                
+                info = DiffInfo()
+                info.file_name = file_path_post
                 if is_new_file:
                     # 对于新文件，直接使用内容创建
                     if combined_diff.startswith("diff ") or combined_diff.startswith("--- ") or combined_diff.startswith("+++ ") or "\n@@" in combined_diff:
@@ -220,6 +234,8 @@ class Diff:
                         {combined_diff}
                         ```
                         """
+                    info.content = combined_diff
+                    info.is_create = True
                 else:
                     # 对于现有文件，读取原内容，让模型生成新内容
                     try:
@@ -249,11 +265,14 @@ class Diff:
                         请根据原文件内容和 diff 信息，生成修改后的完整文件内容，然后使用 replace_file 工具将内容写入文件 {full_path_post}。
                         {"请确保应用所有的 diff 修改，并解决可能的冲突。" if len(file_changes) > 1 else ""}
                         """
+                        info.file_content = original_content
+                        info.content = formatted_diffs
+                        info.is_modify = True
                     except Exception as e:
                         logger.error(f"读取原文件失败: {str(e)}")
                         failed_files.append(file_path_post)
                         continue
-                
+
                 # 调用 AI 模型处理
                 logger.info(f"处理文件: {file_path_post} (包含 {len(file_changes)} 个 diff)")
                 response = self.ai_assistant.generate_response(prompt, use_tools=True)
@@ -263,12 +282,13 @@ class Diff:
                     logger.warning(f"文件处理可能失败: {file_path_post}, 响应: {response}")
                     failed_files.append(file_path_post)
                 else:
+                    diff_infos.append(info)
                     logger.info(f"处理文件成功: {file_path_post}")
             except Exception as e:
                 logger.error(f"处理文件失败: {file_path_post}, 错误: {str(e)}")
                 failed_files.append(file_path_post)
         
-        return failed_files
+        return (failed_files, diff_infos)
 
     def _replace_file(self, file_path: str, content: str) -> str:
         """

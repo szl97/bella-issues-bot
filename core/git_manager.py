@@ -6,7 +6,7 @@ from urllib.parse import urlparse, urlunparse
 
 import git
 
-from log_config import get_logger
+from core.log_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -22,10 +22,6 @@ class GitConfig:
     auth_token: Optional[str] = os.getenv("GITHUB_TOKEN")
 
 
-def get_issues_branch_name(issues_id: int, round: int) -> str:
-    return f"bella-bot-issues-{issues_id}-{round}"
-
-
 class GitManager:
     """Manages git operations including push, pull, branch creation and switching"""
 
@@ -37,7 +33,7 @@ class GitManager:
 
     def _ensure_repo(self) -> None:
         """Ensure git repository exists and is properly initialized"""
-        if not os.path.exists(self.config.repo_path):
+        if not os.path.exists(self.config.repo_path) or len(os.listdir(self.config.repo_path)) == 0:
             if self.config.remote_url:
                 self.clone()
             else:
@@ -51,12 +47,11 @@ class GitManager:
                 if self.config.auth_token and self.config.remote_url:
                     self._set_remote_with_auth()
             except git.InvalidGitRepositoryError:
-                if self.config.remote_url:
-                    self.clone()
-                else:
-                    raise ValueError(
-                        f"Invalid git repository at: {self.config.repo_path}"
-                    )
+                raise ValueError(
+                    f"Invalid git repository at: {self.config.repo_path}"
+                )
+
+
 
     def _get_url_with_token(self, url: str) -> str:
         """
@@ -86,8 +81,7 @@ class GitManager:
                     parsed.fragment,
                 )
             )
-        elif "@" in url and ":" in url and url.startswith("git@"):
-            # Handle SSH format: git@github.com:username/repo.git
+        elif "@" in url and ":" in url and url.startswith("git@"):  # Handle SSH format: git@github.com:username/repo.git
             return url  # Don't modify SSH URLs
         else:
             return url  # Return original if format is not recognized
@@ -131,7 +125,7 @@ class GitManager:
         if not self.config.remote_url:
             raise ValueError("Remote URL must be set to clone a repository")
 
-        self._clone_repo()
+        self._clone_repo(branch=self.config.default_branch)
 
     def _clone_repo(self, branch: Optional[str] = None) -> None:
         """
@@ -523,7 +517,7 @@ class GitManager:
             issue = repo.get_issue(issue_number)
 
             # 添加评论
-            comment = issue.create_comment(comment_text)
+            comment = issue.create_comment(f"bella-issues-bot已处理：\n{comment_text}")
 
             logger.info(f"成功在 Issue #{issue_number} 下添加评论 (ID: {comment.id})")
             return True
@@ -578,25 +572,25 @@ class GitManager:
         """
         try:
             # 获取远程分支
+            remote_name = self.config.remote_name
             remote_branches = self.list_branches(remote=True)
-
+            remote_target = f"{remote_name}/{target_branch}"
             # 检查目标分支是否存在于远端
-            if target_branch not in remote_branches:
-                logger.warning(f"目标分支 {target_branch} 不存在于远端")
+            if remote_target not in remote_branches:
+                logger.warning(f"目标分支 {remote_target} 不存在于远端")
                 return False
-            
+
             # 切换到目标分支，如果不存在则创建
             logger.info(f"切换到分支: {target_branch}")
             self.switch_branch(target_branch, create=True)
-            
+
             # 拉取最新代码
-            logger.info(f"拉取远程分支: {target_branch} 的最新代码")
-            self.pull()
-            
+            logger.info(f"拉取远程分支: {remote_target} 的最新代码")
+            self.pull(target_branch)
+
             # 强制重置到远程分支状态
-            remote_name = self.config.remote_name
-            logger.info(f"重置到远程分支: {remote_name}/{target_branch}")
-            self.repo.git.reset(f"{remote_name}/{target_branch}", hard=True)
+            logger.info(f"重置到远程分支: {remote_target}")
+            self.repo.git.reset(f"{remote_target}", hard=True)
 
             logger.info(f"成功重置到版本: {target_branch}")
             return True
@@ -625,39 +619,35 @@ class GitManager:
             # 确保远程仓库信息是最新的
             self.repo.git.fetch(self.config.remote_name)
             logger.info(f"成功获取远程仓库信息")
-
+            
             # 获取所有远程分支
             remote_branches = self.repo.git.branch("-r").splitlines()
             remote_branches = [branch.strip() for branch in remote_branches]
-
+            
             # 查找与指定issue相关的分支
-            issue_branches = []
+            issue_branch_name = f"bella-issues-bot-{issue_id}"
+            remote_issue_branch = f"{self.config.remote_name}/{issue_branch_name}"
+            
+            branch_exists = False
             for branch in remote_branches:
-                # 移除远程名称前缀
-                branch_name = branch.split("/", 1)[-1] if "/" in branch else branch
-                # 检查是否是该issue的分支
-                if f"bella-bot-issues-{issue_id}-" in branch_name:
-                    issue_branches.append(branch_name)
-            remote_name = self.config.remote_name
-            if issue_branches:
-                # 按照轮次排序，获取最新的分支
-                issue_branches.sort(key=lambda x: int(x.split("-")[-1]) if x.split("-")[-1].isdigit() else 0, reverse=True)
-                latest_branch = issue_branches[0]
-                # 切换到最新分支
-                self.switch_branch(latest_branch, create=True)
+                if remote_issue_branch in branch:
+                    branch_exists = True
+                    break
+                    
+            if branch_exists:
+                # 切换到issue分支
+                self.switch_branch(issue_branch_name, create=True)
                 self.pull()
-                logger.info(f"重置到远程分支: {remote_name}/{latest_branch}")
-                self.repo.git.reset(f"{remote_name}/{latest_branch}", hard=True)
-                logger.info(f"成功切换到issue #{issue_id}的最新分支: {latest_branch}")
-                return latest_branch
+                logger.info(f"成功切换到issue #{issue_id}的分支: {issue_branch_name}")
             else:
                 # 如果没有找到相关分支，切换到默认分支
                 self.switch_branch(self.config.default_branch)
                 self.pull()
-                logger.info(f"重置到远程分支: {remote_name}/{self.config.default_branch}")
-                self.repo.git.reset(f"{remote_name}/{self.config.default_branch}", hard=True)
+                logger.info(f"重置到远程分支: {self.config.remote_name}/{self.config.default_branch}")
+                self.repo.git.reset(f"{self.config.remote_name}/{self.config.default_branch}", hard=True)
                 logger.info(f"未找到issue #{issue_id}的分支，已切换到默认分支: {self.config.default_branch}")
-                return self.config.default_branch
+            
+            return issue_branch_name
         except git.GitCommandError as e:
             logger.error(f"切换到issue分支时出错: {str(e)}")
             raise

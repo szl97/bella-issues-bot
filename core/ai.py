@@ -9,7 +9,7 @@ from langchain_core.runnables.base import RunnableSequence
 from langchain_core.tools import BaseTool, Tool
 from langchain_openai import ChatOpenAI
 
-from log_config import get_logger
+from core.log_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -118,7 +118,7 @@ class AIAssistant:
 
     def generate_response(
         self, prompt: str, use_tools: bool = False, **kwargs: Any
-    ) -> str:
+    ) -> Any:
         """
         生成响应
 
@@ -128,7 +128,7 @@ class AIAssistant:
             **kwargs: 其他参数
 
         Returns:
-            str: 生成的响应
+            any: 生成的响应
         """
         try:
             if use_tools and self.tools:

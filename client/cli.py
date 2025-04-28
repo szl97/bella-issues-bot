@@ -18,89 +18,119 @@ def parse_args() -> argparse.Namespace:
     # Required arguments
     parser.add_argument(
         "--project-dir", 
+        "-p",
         type=str, 
         default=os.path.abspath(os.getcwd()),
         help="Path to the project directory (default: current directory)"
     )
     parser.add_argument(
         "--issue-id", 
+        "-i",
         type=int, 
         required=True,
         help="The ID of the issue being processed"
     )
     parser.add_argument(
         "--requirement", 
+        "-r",
         type=str, 
         help="The user requirement text"
     )
     parser.add_argument(
         "--requirement-file", 
+        "-f",
         type=str, 
         help="Path to file containing the user requirement"
     )
 
     # Optional arguments for WorkflowEngineConfig
+    # 统一模型配置
+    parser.add_argument(
+        "--model", 
+        "-m",
+        type=str, 
+        help="Model to use for both core and data operations (优先级高于单独配置)"
+    )
+    parser.add_argument(
+        "--temperature",
+        "-t",
+        type=float, 
+        help="Temperature for both core and data models (优先级高于单独配置)"
+    )
+    
+    # 独立模型配置
     parser.add_argument(
         "--core-model", 
+        "--cm",
         type=str, 
         default="gpt-4o",
-        help="Model to use for core AI operations"
+        help="Model to use for core AI operations (当未设置--model时使用)"
     )
     parser.add_argument(
         "--data-model", 
+        "--dm",
         type=str, 
         default="gpt-4o",
-        help="Model to use for data operations"
+        help="Model to use for data operations (当未设置--model时使用)"
     )
     parser.add_argument(
-        "--core-temperature", 
+        "--core-temperature",
+        "--ct",
         type=float, 
         default=0.7,
-        help="Temperature for core model"
+        help="Temperature for core model (当未设置--temperature时使用)"
     )
     parser.add_argument(
-        "--data-temperature", 
+        "--data-temperature",
+        "--dt",
         type=float, 
         default=0.7,
-        help="Temperature for data model"
+        help="Temperature for data model (当未设置--temperature时使用)"
     )
     parser.add_argument(
         "--max-retry", 
+        "--retry",
         type=int, 
         default=3,
         help="Maximum number of retry attempts"
     )
     parser.add_argument(
         "--default-branch", 
+        "--branch",
         type=str, 
         default="main",
         help="Default branch name"
     )
     parser.add_argument(
-        "--mode", 
-        type=str, 
+        "--mode",
+        "-md",
+        type=str,
         choices=["client", "bot"],
         default="client",
         help="Operation mode: 'client' or 'bot'"
     )
     parser.add_argument(
-        "--base-url", 
-        type=str, 
+        "--base-url",
+        "-u",
+        type=str,
         help="Base URL for API calls"
     )
     parser.add_argument(
-        "--api-key", 
-        type=str, 
+        "--api-key",
+        "-k",
+        type=str,
         help="API key for authentication"
     )
     parser.add_argument(
-        "--github-remote-url", 
-        type=str, 
+        "--github-remote-url",
+        "--git-url",
+        type=str,
         help="GitHub remote repository URL"
     )
     parser.add_argument(
-        "--github-token", 
-        type=str, 
+        "--github-token",
+        "--git-token",
+        type=str,
         help="GitHub authentication token"
     )
     
@@ -125,14 +155,31 @@ def get_requirement_text(args: argparse.Namespace) -> Optional[str]:
 
 def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     """Build WorkflowEngineConfig parameters from command line arguments."""
+    
+    # 处理统一的模型和温度配置
+    core_model = args.core_model
+    data_model = args.data_model
+    core_temperature = args.core_temperature
+    data_temperature = args.data_temperature
+    
+    # 如果设置了统一模型，则覆盖个别设置
+    if args.model:
+        core_model = args.model
+        data_model = args.model
+        
+    # 如果设置了统一温度，则覆盖个别设置
+    if args.temperature is not None:
+        core_temperature = args.temperature
+        data_temperature = args.temperature
+    
     config_params = {
         "project_dir": args.project_dir,
         "issue_id": args.issue_id,
-        "core_model": args.core_model,
-        "data_model": args.data_model,
-        "core_template": args.core_temperature,  # Note: using template to match original param name
-        "data_template": args.data_temperature,  # Note: using template to match original param name
-        "max_retry": args.max_retry,
+        "core_model": core_model,
+        "data_model": data_model,
+        "core_template": core_temperature,  # Note: using template to match original param name
+        "data_template": data_temperature,  # Note: using template to match original param name
+        "max_retry": args.max_retry, 
         "default_branch": args.default_branch,
         "mode": args.mode,
     }

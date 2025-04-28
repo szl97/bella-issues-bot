@@ -1,0 +1,515 @@
+I'll create a client tool that can generate GitHub CICD workflows for projects using bella-issues-bot. The tool will generate two workflows:
+
+1. A workflow for initializing memory - triggered when a specified branch is pushed
+2. A workflow for executing WorkflowEngine - triggered by issue creation or comments on issues
+
+Let's start by designing the necessary components and implementing them.
+
+## Planning
+
+1. Create a new module for generating GitHub workflow files
+2. Implement CLI interface for the generator
+3. Create templates for the GitHub workflow YAML files
+4. Implement the logic to customize and write the workflow files
+5. Update package configuration to include the new commands
+
+Let's start implementing:
+
+```diff
+--- /dev/null
++++ client/github_workflow_generator.py
+@@ -0,0 +1,242 @@
++"""
++GitHub Workflow Generator
++
++A module for generating GitHub Actions workflow files to integrate bella-issues-bot with GitHub.
++Creates two workflows:
++1. File Memory Initialization - Triggered on push to a configurable branch
++2. Issue Processing Bot - Triggered when issues are created or commented on
++"""
++
++import argparse
++import os
++import sys
++from pathlib import Path
++from typing import Dict, Optional
++
++from core.log_config import get_logger, setup_logging
++
++logger = get_logger(__name__)
++
++# Template for memory initialization workflow
++MEMORY_INIT_TEMPLATE = """name: Initialize File Memory
++
++on:
++  push:
++    branches:
++      - {branch}
++
++jobs:
++  init-memory:
++    runs-on: ubuntu-latest
++    permissions:
++      contents: write
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v3
++        with:
++          fetch-depth: 0
++
++      - name: Set up Python
++        uses: actions/setup-python@v4
++        with:
++          python-version: '3.10'
++
++      - name: Install bella-issues-bot
++        run: |
++          python -m pip install --upgrade pip
++          pip install bella-issues-bot{package_version}
++
++      - name: Initialize file memory
++        env:
++          OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
++          OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
++          GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
++          GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
++        run: |
++          bella-file-memory -d . -m {model} -t {temperature}
++
++      - name: Commit memory files if changed
++        run: |
++          git config --local user.email "action@github.com"
++          git config --local user.name "GitHub Action"
++          git add .eng/memory/
++          git diff --staged --quiet || git commit -m "Update file memory"
++          git push
++"""
++
++# Template for issue processing workflow
++ISSUE_PROCESS_TEMPLATE = """name: Process Issues with bella-issues-bot
++
++on:
++  issues:
++    types: [opened]
++  issue_comment:
++    types: [created]
++
++jobs:
++  process-issue:
++    runs-on: ubuntu-latest
++    permissions:
++      contents: write
++      issues: write
++    if: ${{{{ !startsWith(github.event.comment.body, 'bella-issues-bot已处理：') }}}}
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v3
++        with:
++          fetch-depth: 0
++
++      - name: Set up Python
++        uses: actions/setup-python@v4
++        with:
++          python-version: '3.10'
++
++      - name: Install bella-issues-bot
++        run: |
++          python -m pip install --upgrade pip
++          pip install bella-issues-bot{package_version}
++
++      - name: Extract issue info
++        id: issue
++        run: |
++          if [[ "${{{{ github.event_name }}}}" == "issues" ]]; then
++            echo "issue_id=${{{{ github.event.issue.number }}}}" >> $GITHUB_OUTPUT
++            echo "requirement<<EOF" >> $GITHUB_OUTPUT
++            echo "${{{{ github.event.issue.body }}}}" >> $GITHUB_OUTPUT
++            echo "EOF" >> $GITHUB_OUTPUT
++          else
++            echo "issue_id=${{{{ github.event.issue.number }}}}" >> $GITHUB_OUTPUT
++            echo "requirement<<EOF" >> $GITHUB_OUTPUT
++            echo "${{{{ github.event.comment.body }}}}" >> $GITHUB_OUTPUT
++            echo "EOF" >> $GITHUB_OUTPUT
++          fi
++
++      - name: Process issue with bella-issues-bot
++        env:
++          OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
++          OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
++          GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
++          GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
++        run: |
++          # Create a new branch for this issue
++          git checkout -b bella-issues-bot-${{{{ steps.issue.outputs.issue_id }}}}
++
++          # Run bella-issues-bot in bot mode
++          bella-issues-bot --mode bot --issue-id ${{{{ steps.issue.outputs.issue_id }}}} --core-model {core_model} --data-model {data_model} --core-temperature {core_temperature} --data-temperature {data_temperature} --requirement "${{{{ steps.issue.outputs.requirement }}}}"
++
++          # Push changes to the new branch
++          git push -u origin bella-issues-bot-${{{{ steps.issue.outputs.issue_id }}}}
++          
++          # Create a pull request
++          PR_URL=$(gh pr create --title "Fix for issue #${{{{ steps.issue.outputs.issue_id }}}}" --body "Automated PR by bella-issues-bot to address issue #${{{{ steps.issue.outputs.issue_id }}}}" --base {base_branch})
++          echo "Created PR: $PR_URL"
++        env:
++          GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
++"""
++
++def generate_workflow_files(
++    output_dir: str,
++    memory_branch: str = "main",
++    base_branch: str = "main",
++    model: str = "gpt-4o",
++    core_model: Optional[str] = None,
++    data_model: Optional[str] = None,
++    temperature: float = 0.7,
++    core_temperature: Optional[float] = None,
++    data_temperature: Optional[float] = None,
++    package_version: str = ""
++) -> Dict[str, str]:
++    """
++    Generate GitHub workflow YAML files.
++    
++    Args:
++        output_dir: Directory to write workflow files
++        memory_branch: Branch that triggers memory initialization
++        base_branch: Base branch for pull requests
++        model: Default model to use for all operations
++        core_model: Model for core operations (if different from model)
++        data_model: Model for data operations (if different from model)
++        temperature: Default temperature setting for all models
++        core_temperature: Temperature for core model (if different)
++        data_temperature: Temperature for data model (if different)
++        package_version: Specific version of package to install (e.g. "==0.1.1")
++        
++    Returns:
++        Dictionary mapping file paths to their contents
++    """
++    workflows_dir = os.path.join(output_dir, ".github", "workflows")
++    os.makedirs(workflows_dir, exist_ok=True)
++    
++    # Format version specification if provided
++    if package_version and not package_version.startswith("=="):
++        package_version = f"=={package_version}"
++    
++    # Use provided models or default to the general model
++    actual_core_model = core_model or model
++    actual_data_model = data_model or model
++    
++    # Use provided temperatures or default to the general temperature
++    actual_core_temp = core_temperature if core_temperature is not None else temperature
++    actual_data_temp = data_temperature if data_temperature is not None else temperature
++    
++    # Generate memory initialization workflow
++    memory_workflow_path = os.path.join(workflows_dir, "memory_init.yml")
++    memory_workflow_content = MEMORY_INIT_TEMPLATE.format(
++        branch=memory_branch,
++        model=model,
++        temperature=temperature,
++        package_version=package_version
++    )
++    
++    # Generate issue processing workflow
++    issue_workflow_path = os.path.join(workflows_dir, "issue_process.yml")
++    issue_workflow_content = ISSUE_PROCESS_TEMPLATE.format(
++        core_model=actual_core_model,
++        data_model=actual_data_model,
++        core_temperature=actual_core_temp,
++        data_temperature=actual_data_temp,
++        base_branch=base_branch,
++        package_version=package_version
++    )
++    
++    # Write the files
++    with open(memory_workflow_path, 'w') as f:
++        f.write(memory_workflow_content)
++    
++    with open(issue_workflow_path, 'w') as f:
++        f.write(issue_workflow_content)
++    
++    logger.info(f"Generated workflow files in {workflows_dir}")
++    
++    return {
++        memory_workflow_path: memory_workflow_content,
++        issue_workflow_path: issue_workflow_content
++    }
++
++def main() -> None:
++    """Command line interface for GitHub workflow generator."""
++    parser = argparse.ArgumentParser(description="Generate GitHub Actions workflows for bella-issues-bot integration")
++    parser.add_argument("--output", "-o", type=str, default=".", help="Output directory (default: current directory)")
++    parser.add_argument("--memory-branch", "-mb", type=str, default="main", help="Branch that triggers memory initialization (default: main)")
++    parser.add_argument("--base-branch", "-bb", type=str, default="main", help="Base branch for pull requests (default: main)")
++    parser.add_argument("--model", "-m", type=str, default="gpt-4o", help="Default model for all operations (default: gpt-4o)")
++    parser.add_argument("--core-model", "--cm", type=str, help="Model for core operations (defaults to --model)")
++    parser.add_argument("--data-model", "--dm", type=str, help="Model for data operations (defaults to --model)")
++    parser.add_argument("--temperature", "-t", type=float, default=0.7, help="Default temperature for all models (default: 0.7)")
++    parser.add_argument("--core-temperature", "--ct", type=float, help="Temperature for core model (defaults to --temperature)")
++    parser.add_argument("--data-temperature", "--dt", type=float, help="Temperature for data model (defaults to --temperature)")
++    parser.add_argument("--package-version", "-v", type=str, default="", help="Specific package version to install (e.g. '0.1.1')")
++    parser.add_argument("--log-level", "-l", type=str, choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="Logging level")
++    
++    args = parser.parse_args()
++    
++    # Setup logging
++    import logging
++    setup_logging(log_level=getattr(logging, args.log_level))
++    
++    # Generate workflow files
++    try:
++        generate_workflow_files(
++            output_dir=args.output,
++            memory_branch=args.memory_branch,
++            base_branch=args.base_branch,
++            model=args.model,
++            core_model=args.core_model,
++            data_model=args.data_model,
++            temperature=args.temperature,
++            core_temperature=args.core_temperature,
++            data_temperature=args.data_temperature,
++            package_version=args.package_version
++        )
++        logger.info("Successfully generated GitHub workflow files")
++    except Exception as e:
++        logger.error(f"Error generating workflow files: {str(e)}")
++        sys.exit(1)
++
++if __name__ == "__main__":
++    main()
+```
+
+Now let's create a CLI script for easier usage:
+
+```diff
+--- /dev/null
++++ scripts/generate_workflows.sh
+@@ -0,0 +1,29 @@
++#!/bin/bash
++
++# Script to generate GitHub workflow files for bella-issues-bot integration
++# This script provides a simple interface to the workflow generator
++
++show_help() {
++    echo "Usage: $0 [options]"
++    echo ""
++    echo "Options:"
++    echo "  -o, --output DIR        Output directory (default: current directory)"
++    echo "  -mb, --memory-branch    Branch that triggers memory initialization (default: main)"
++    echo "  -bb, --base-branch      Base branch for pull requests (default: main)"
++    echo "  -m, --model MODEL       Default model for all operations (default: gpt-4o)"
++    echo "  -t, --temp VALUE        Default temperature setting (default: 0.7)"
++    echo "  -v, --version VERSION   Specific package version to install (e.g. '0.1.1')"
++    echo "  -h, --help              Show this help message"
++    echo ""
++    echo "Additional options like --core-model, --data-model, etc. are also supported."
++    echo "Run 'bella-github-workflows --help' for complete details."
++    echo ""
++}
++
++if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
++    show_help
++    exit 0
++fi
++
++# Pass all arguments to the Python module
++python -m client.github_workflow_generator "$@"
+```
+
+Now let's update the package entry points to include our new command:
+
+```diff
+--- pyproject.toml
++++ pyproject.toml
+@@ -47,6 +47,7 @@ pyyaml = ">=6.0"
+ 
+ [tool.poetry.scripts]
+ bella-issues-bot = 'client.terminal:run_workflow_from_terminal'
+ bella-file-memory = 'client.file_memory_client:main'
++bella-github-workflows = 'client.github_workflow_generator:main'
+ 
+ [tool.ruff]
+```
+
+Let's also update the client package exports:
+
+```diff
+--- client/__init__.py
++++ client/__init__.py
+@@ -2,3 +2,4 @@
+ 
+ # Export file memory functions for programmatic use
+ from client.file_memory_client import initialize_file_memory, update_file_descriptions, process_failed_files
++from client.github_workflow_generator import generate_workflow_files
+```
+
+Let's update the README to include instructions for using our new tool:
+
+```diff
+--- README.md
++++ README.md
+@@ -98,8 +98,23 @@ for data_model in data_model if data_model is None
+ ## 示例
+ 
+ 可以在[examples](./examples/)目录下找到使用示例。
+ 
+ ### 文件记忆初始化
+ 
+ 在项目根目录执行 `bella-file-memory` 可以初始化文件记忆系统，它会自动分析项目中的文件并生成描述信息。
+ 更多详细信息请参阅[文件记忆客户端文档](./client/README_FILE_MEMORY.md)。
++
++### GitHub工作流集成
++
++bella-issues-bot 提供了一个工具，可以自动为您的项目生成 GitHub Actions 工作流配置：
++
++```bash
++bella-github-workflows [选项]
++```
++
++这将创建两个工作流文件：
++1. `memory_init.yml` - 当指定分支有推送时初始化文件记忆
++2. `issue_process.yml` - 当创建新 Issue 或添加评论时处理需求
++
++选项：
++- `--memory-branch`, `-mb` - 触发记忆初始化的分支（默认：main）
++- `--base-branch`, `-bb` - 拉取请求的目标分支（默认：main）
++- `--model`, `-m` - 默认模型（默认：gpt-4o）
++- `--temperature`, `-t` - 默认温度（默认：0.7）
+```
+
+Finally, let's create a client README file specific to GitHub workflows:
+
+```diff
+--- /dev/null
++++ client/README_GITHUB_WORKFLOWS.md
+@@ -0,0 +1,85 @@
++# GitHub工作流生成器
++
++bella-issues-bot 提供了自动生成 GitHub Actions 工作流配置的功能，可以轻松将 AI 助手集成到您的 GitHub 项目中。
++
++## 功能概述
++
++工作流生成器会创建两个GitHub Actions工作流文件：
++
++1. **记忆初始化工作流** (`memory_init.yml`)
++   - 当指定分支有推送时触发
++   - 自动分析项目文件并生成文件描述
++   - 将记忆文件提交回仓库
++
++2. **Issue处理工作流** (`issue_process.yml`)
++   - 在创建新Issue或添加评论时触发
++   - 自动提取Issue或评论中的需求
++   - 在专用分支上处理需求并实现代码
++   - 创建拉取请求，提供解决方案
++   - 在Issue中添加处理结果的评论
++
++## 命令行使用方式
++
++```bash
++bella-github-workflows [选项]
++```
++
++### 命令行选项
++
++| 选项 | 简写 | 描述 | 默认值 |
++|------|------|------|--------|
++| `--output` | `-o` | 输出目录 | 当前目录 |
++| `--memory-branch` | `-mb` | 触发记忆初始化的分支 | main |
++| `--base-branch` | `-bb` | 拉取请求的目标分支 | main |
++| `--model` | `-m` | 默认模型 | gpt-4o |
++| `--core-model` | `--cm` | 核心操作的模型 | 默认等于model |
++| `--data-model` | `--dm` | 数据操作的模型 | 默认等于model |
++| `--temperature` | `-t` | 默认温度设置 | 0.7 |
++| `--core-temperature` | `--ct` | 核心模型温度 | 默认等于temperature |
++| `--data-temperature` | `--dt` | 数据模型温度 | 默认等于temperature |
++| `--package-version` | `-v` | 指定安装的包版本 | 最新版本 |
++| `--log-level` | `-l` | 日志级别 | INFO |
++| `--help` | `-h` | 显示帮助信息 | - |
++
++### 简易脚本使用
++
++```bash
++./scripts/generate_workflows.sh [选项]
++```
++
++## 工作流详解
++
++### 记忆初始化工作流 (`memory_init.yml`)
++
++此工作流在指定分支有推送时运行，它：
++1. 检出代码库
++2. 设置Python环境
++3. 安装bella-issues-bot
++4. 初始化文件记忆系统，生成项目文件描述
++5. 将生成的记忆文件提交回仓库
++
++### Issue处理工作流 (`issue_process.yml`)
++
++此工作流在创建新Issue或添加评论时触发，它：
++1. 检出代码库
++2. 设置Python环境
++3. 安装bella-issues-bot
++4. 提取Issue信息和需求内容
++5. 创建专用分支处理需求
++6. 运行bella-issues-bot处理需求并生成代码
++7. 将更改推送到专用分支
++8. 创建拉取请求
++9. 在Issue中添加处理结果的评论
++
++## GitHub配置要求
++
++要使工作流正常运行，您需要在GitHub仓库的Secrets中配置以下环境变量：
++
++- `OPENAI_API_KEY`: OpenAI API密钥
++- `OPENAI_API_BASE`: (可选) 自定义OpenAI API基础URL
++
++此外，工作流需要以下权限：
++- `contents: write` - 允许读写仓库内容
++- `issues: write` - 允许在Issue中添加评论
++
++## 示例
++
++```bash
++# 使用默认设置生成工作流
++bella-github-workflows
++
++# 自定义模型和温度
++bella-github-workflows --model gpt-4-turbo --temperature 0.8
++
++# 为不同操作指定不同模型
++bella-github-workflows --core-model gpt-4o --data-model gpt-3.5-turbo
++
++# 指定工作流触发的分支
++bella-github-workflows --memory-branch develop --base-branch main
++```
+```
+
+Now let's update the main README to reference our new GitHub workflow documentation:
+
+```diff
+--- README.md
++++ README.md
+@@ -118,3 +118,5 @@ bella-github-workflows [选项]
+ - `--base-branch`, `-bb` - 拉取请求的目标分支（默认：main）
+ - `--model`, `-m` - 默认模型（默认：gpt-4o）
+ - `--temperature`, `-t` - 默认温度（默认：0.7）
++
++详细信息请参考[GitHub工作流文档](./client/README_GITHUB_WORKFLOWS.md).
+```
+
+This concludes a fully working implementation. Here's what I've created:
+
+1. A new module `client/github_workflow_generator.py` that can generate GitHub workflows for:
+   - Memory initialization triggered by branch pushes
+   - Issue processing triggered by new issues or comments
+
+2. A command-line interface `bella-github-workflows` to easily generate these workflow files
+
+3. A helper script `scripts/generate_workflows.sh` for even easier command-line usage
+
+4. Documentation in both the main README and a dedicated README_GITHUB_WORKFLOWS.md
+
+The generated workflows will:
+1. For memory initialization: Run on push to a configurable branch, initialize the file memory, and commit the results
+2. For issue processing: Run when issues are created or commented on, process the requirements using bella-issues-bot in bot mode, create a branch with the changes, create a PR, and comment on the issue with the results
+
+The implementation follows the same pattern as the existing client tools, uses proper configuration options, and has comprehensive documentation.

@@ -7,7 +7,6 @@
 3. 为AI助手提供决策工具
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -15,10 +14,10 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from core.ai import AIAssistant, AIConfig
+from core.log_config import get_logger
 from core.version_manager import VersionManager
 
-logger = logging.getLogger(__name__)
-
+logger = get_logger(__name__)
 
 @dataclass
 class DecisionResult:
@@ -80,8 +79,9 @@ class DecisionProcess:
 
 # 决策步骤
 1. 仔细阅读用户当前的需求
-2. 分析需求是否包含代码修改、文档修改、新增功能、修复bug等要求
+2. 分析需求是否包含代码修改、文档修改、新增功能、修复bug、回滚代码等要求
 3. 如果用户只是提问、咨询、请求解释或澄清，则判断为不需要修改代码
+4、只要需要修改项目中的文件，则判断为需要修改代码
 
 请使用requirement_analyzer工具返回决策结果。
 """

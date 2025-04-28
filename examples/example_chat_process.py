@@ -4,7 +4,7 @@
 1. 不需要使用版本管理
 2. 使用ChatProcessor替代CodeEngineer
 """
-
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -13,11 +13,13 @@ from core.ai import AIConfig
 from core.chat_processor import ChatProcessor, ChatProcessorConfig
 from core.file_memory import FileMemory, FileMemoryConfig
 from core.file_selector import FileSelector
-from core.git_manager import GitManager, GitConfig, get_issues_branch_name
+from core.git_manager import GitManager, GitConfig
+from core.log_config import setup_logging
 from core.log_manager import LogManager, LogConfig
 
 
 def main():
+    setup_logging(log_level=logging.DEBUG)
     # 加载环境变量
     load_dotenv()
     
@@ -37,7 +39,7 @@ def main():
         repo_path=project_dir
     )
     git_manager = GitManager(config=git_config)
-    branch_name = get_issues_branch_name(issue_id, current_round)
+
     
     # 初始化AI助手
     ai_config = AIConfig(
@@ -52,8 +54,6 @@ def main():
     if current_round > 1:
         file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
         file_memory.update_file_details()
-
-    git_manager.switch_branch(branch_name, True)
 
     selector = FileSelector(
         project_dir,
@@ -71,7 +71,7 @@ def main():
     )
     chat_processor = ChatProcessor(ai_config=ai_config, log_manager=log_manager, config=chat_config)
     
-    logger.info(chat_processor.process_chat(current_requirement))
+    chat_processor.process_chat(current_requirement)
 
 
 if __name__ == "__main__":

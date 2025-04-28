@@ -1,6 +1,6 @@
 import os
 from copy import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 from typing_extensions import Optional
@@ -8,10 +8,9 @@ from typing_extensions import Optional
 from core.ai import AIAssistant, AIConfig
 from core.diff import Diff
 from core.log_manager import LogManager, LogConfig
-from log_config import get_logger
+from core.log_config import get_logger
 
 logger = get_logger(__name__)
-
 
 @dataclass
 class CodeEngineerConfig:
@@ -51,6 +50,8 @@ class CodeEngineer:
         self.ai_assistant = AIAssistant(config=self.ai_config)
         # 用于存储处理失败的文件
         self.failed_files = []
+        # 用于存储修改的文件
+        self.modified_files = []
 
     def _read_system_prompt(self) -> str:
         """
@@ -85,7 +86,8 @@ class CodeEngineer:
         try:
             # 重置失败文件列表
             self.failed_files = []
-            
+            # 重置修改的文件列表
+            self.diff_infos = []
             # 设置 AI 助手的系统提示词
             self.ai_assistant.config.sys_prompt = self.system_prompt
             
@@ -100,14 +102,21 @@ class CodeEngineer:
                 return (False, None)
             
             # 处理每个 diff
-            self.failed_files = self.diff.process_diffs(diffs, self.config.project_dir)
+            self.failed_files, self.diff_infos  = self.diff.process_diffs(diffs, self.config.project_dir)
             
             # 归档日志
             self.log_manager.archive_logs(
                 sys_prompt=self.system_prompt,
                 prompt=prompt,
-                response=response
+                response=response,
+                diff_infos=self.diff_infos
             )
+            
+            # 记录日志
+            if self.modified_files:
+                logger.info(f"本次修改了 {len(self.modified_files)} 个文件: " + 
+                           ", ".join(self.modified_files[:5]) + 
+                           ("..." if len(self.modified_files) > 5 else ""))
             
             # 如果有失败的文件，可以在这里处理
             if self.failed_files:

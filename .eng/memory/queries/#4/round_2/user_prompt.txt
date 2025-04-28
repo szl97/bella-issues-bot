@@ -1,0 +1,2672 @@
+# 项目文件描述
+
+
+- client/github_workflow_generator.py: GitHub工作流生成器的核心实现，包含generate_workflow_files函数和命令行入口main函数。该模块负责生成两个YAML工作流文件：记忆初始化(memory_init.yml)和Issue处理(issue_process.yml)，支持自定义模型、分支、温度等参数。与generate_workflows.sh脚本配合使用。
+
+- client/README_GITHUB_WORKFLOWS.md: 该文档说明bella-issues-bot的GitHub工作流生成器功能，包括两个主要工作流：记忆初始化工作流（分析项目文件并生成描述）和Issue处理工作流（处理Issue需求并自动实现代码）。文档详细介绍了这些工作流的触发条件和功能。
+
+- scripts/generate_workflows.sh: Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
+
+- client/__init__.py: Client包的初始化文件，用于从终端运行WorkflowEngine。导出了file_memory_client模块中的initialize_file_memory、update_file_descriptions和process_failed_files函数供编程使用。
+
+- pyproject.toml: 项目配置文件，定义bella-issues-bot的元数据、依赖项和工具配置。包含项目版本、描述、作者等信息，以及Python依赖库配置、代码格式化工具设置。是项目构建和包管理的核心配置文件。
+
+- client/file_memory_client.py: 一个独立的客户端模块，用于初始化和管理FileMemory，仅使用GitManager而不依赖LogManager。提供了CLI和编程接口，实现了文件描述的更新功能。包含initialize_file_memory、update_file_descriptions等关键函数。支持命令行参数配置和环境变量加载。
+
+- core/git_manager.py: Git操作管理模块，提供仓库克隆、分支管理、提交、拉取、推送等功能。包含GitManager类和GitConfig数据类，支持认证令牌、远程仓库操作，提供获取变更文件、重置分支等辅助方法。被FileMemory等模块调用以支持版本控制。
+
+- core/workflow_engine.py: 工作流引擎核心类，协调版本管理、日志管理和AI交互。实现了处理用户需求的完整流程，支持代码生成和聊天两种工作模式，包含环境设置、清理和决策分析功能。
+
+- core/file_memory.py: 文件记忆管理模块，负责维护和更新项目文件的描述信息。包含FileMemory类，使用AI生成文件描述，支持Git和LogManager两种方式跟踪文件变更，并批量处理文件以提高效率。与AI和Git模块紧密交互。
+
+
+# 文件内容
+
+
+
+```
+File: client/github_workflow_generator.py
+1 """
+2 GitHub Workflow Generator
+3 
+4 A module for generating GitHub Actions workflow files to integrate bella-issues-bot with GitHub.
+5 Creates two workflows:
+6 1. File Memory Initialization - Triggered on push to a configurable branch
+7 2. Issue Processing Bot - Triggered when issues are created or commented on
+8 """
+9 
+10 import argparse
+11 import os
+12 import sys
+13 from pathlib import Path
+14 from typing import Dict, Optional
+15 
+16 from core.log_config import get_logger, setup_logging
+17 
+18 logger = get_logger(__name__)
+19 
+20 # Template for memory initialization workflow
+21 MEMORY_INIT_TEMPLATE = """name: Initialize File Memory
+22 
+23 on:
+24   push:
+25     branches:
+26       - {branch}
+27 
+28 jobs:
+29   init-memory:
+30     runs-on: ubuntu-latest
+31     permissions:
+32       contents: write
+33     steps:
+34       - name: Checkout code
+35         uses: actions/checkout@v3
+36         with:
+37           fetch-depth: 0
+38 
+39       - name: Set up Python
+40         uses: actions/setup-python@v4
+41         with:
+42           python-version: '3.10'
+43 
+44       - name: Install bella-issues-bot
+45         run: |
+46           python -m pip install --upgrade pip
+47           pip install bella-issues-bot{package_version}
+48 
+49       - name: Initialize file memory
+50         env:
+51           OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
+52           OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
+53           GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
+54           GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+55         run: |
+56           bella-file-memory -d . -m {model} -t {temperature}
+57 
+58       - name: Commit memory files if changed
+59         run: |
+60           git config --local user.email "action@github.com"
+61           git config --local user.name "GitHub Action"
+62           git add .eng/memory/
+63           git diff --staged --quiet || git commit -m "Update file memory"
+64           git push
+65 """
+66 
+67 # Template for issue processing workflow
+68 ISSUE_PROCESS_TEMPLATE = """name: Process Issues with bella-issues-bot
+69 
+70 on:
+71   issues:
+72     types: [opened]
+73   issue_comment:
+74     types: [created]
+75 
+76 jobs:
+77   process-issue:
+78     runs-on: ubuntu-latest
+79     permissions:
+80       contents: write
+81       issues: write
+82     if: ${{{{ !startsWith(github.event.comment.body, 'bella-issues-bot已处理：') }}}}
+83     steps:
+84       - name: Checkout code
+85         uses: actions/checkout@v3
+86         with:
+87           fetch-depth: 0
+88 
+89       - name: Set up Python
+90         uses: actions/setup-python@v4
+91         with:
+92           python-version: '3.10'
+93 
+94       - name: Install bella-issues-bot
+95         run: |
+96           python -m pip install --upgrade pip
+97           pip install bella-issues-bot{package_version}
+98 
+99       - name: Extract issue info
+100         id: issue
+101         run: |
+102           if [[ "${{{{ github.event_name }}}}" == "issues" ]]; then
+103             echo "issue_id=${{{{ github.event.issue.number }}}}" >> $GITHUB_OUTPUT
+104             echo "requirement<<EOF" >> $GITHUB_OUTPUT
+105             echo "${{{{ github.event.issue.body }}}}" >> $GITHUB_OUTPUT
+106             echo "EOF" >> $GITHUB_OUTPUT
+107           else
+108             echo "issue_id=${{{{ github.event.issue.number }}}}" >> $GITHUB_OUTPUT
+109             echo "requirement<<EOF" >> $GITHUB_OUTPUT
+110             echo "${{{{ github.event.comment.body }}}}" >> $GITHUB_OUTPUT
+111             echo "EOF" >> $GITHUB_OUTPUT
+112           fi
+113 
+114       - name: Process issue with bella-issues-bot
+115         env:
+116           OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
+117           OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
+118           GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
+119           GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+120         run: |
+121           # Create a new branch for this issue
+122           git checkout -b bella-issues-bot-${{{{ steps.issue.outputs.issue_id }}}}
+123 
+124           # Run bella-issues-bot in bot mode
+125           bella-issues-bot --mode bot --issue-id ${{{{ steps.issue.outputs.issue_id }}}} --core-model {core_model} --data-model {data_model} --core-temperature {core_temperature} --data-temperature {data_temperature} --requirement "${{{{ steps.issue.outputs.requirement }}}}"
+126 
+127           # Push changes to the new branch
+128           git push -u origin bella-issues-bot-${{{{ steps.issue.outputs.issue_id }}}}
+129           
+130           # Create a pull request
+131           PR_URL=$(gh pr create --title "Fix for issue #${{{{ steps.issue.outputs.issue_id }}}}" --body "Automated PR by bella-issues-bot to address issue #${{{{ steps.issue.outputs.issue_id }}}}" --base {base_branch})
+132           echo "Created PR: $PR_URL"
+133         env:
+134           GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+135 """
+136 
+137 def generate_workflow_files(
+138     output_dir: str,
+139     memory_branch: str = "main",
+140     base_branch: str = "main",
+141     model: str = "gpt-4o",
+142     core_model: Optional[str] = None,
+143     data_model: Optional[str] = None,
+144     temperature: float = 0.7,
+145     core_temperature: Optional[float] = None,
+146     data_temperature: Optional[float] = None,
+147     package_version: str = ""
+148 ) -> Dict[str, str]:
+149     """
+150     Generate GitHub workflow YAML files.
+151     
+152     Args:
+153         output_dir: Directory to write workflow files
+154         memory_branch: Branch that triggers memory initialization
+155         base_branch: Base branch for pull requests
+156         model: Default model to use for all operations
+157         core_model: Model for core operations (if different from model)
+158         data_model: Model for data operations (if different from model)
+159         temperature: Default temperature setting for all models
+160         core_temperature: Temperature for core model (if different)
+161         data_temperature: Temperature for data model (if different)
+162         package_version: Specific version of package to install (e.g. "==0.1.1")
+163         
+164     Returns:
+165         Dictionary mapping file paths to their contents
+166     """
+167     workflows_dir = os.path.join(output_dir, ".github", "workflows")
+168     os.makedirs(workflows_dir, exist_ok=True)
+169     
+170     # Format version specification if provided
+171     if package_version and not package_version.startswith("=="):
+172         package_version = f"=={package_version}"
+173     
+174     # Use provided models or default to the general model
+175     actual_core_model = core_model or model
+176     actual_data_model = data_model or model
+177     
+178     # Use provided temperatures or default to the general temperature
+179     actual_core_temp = core_temperature if core_temperature is not None else temperature
+180     actual_data_temp = data_temperature if data_temperature is not None else temperature
+181     
+182     # Generate memory initialization workflow
+183     memory_workflow_path = os.path.join(workflows_dir, "memory_init.yml")
+184     memory_workflow_content = MEMORY_INIT_TEMPLATE.format(
+185         branch=memory_branch,
+186         model=model,
+187         temperature=temperature,
+188         package_version=package_version
+189     )
+190     
+191     # Generate issue processing workflow
+192     issue_workflow_path = os.path.join(workflows_dir, "issue_process.yml")
+193     issue_workflow_content = ISSUE_PROCESS_TEMPLATE.format(
+194         core_model=actual_core_model,
+195         data_model=actual_data_model,
+196         core_temperature=actual_core_temp,
+197         data_temperature=actual_data_temp,
+198         base_branch=base_branch,
+199         package_version=package_version
+200     )
+201     
+202     # Write the files
+203     with open(memory_workflow_path, 'w') as f:
+204         f.write(memory_workflow_content)
+205     
+206     with open(issue_workflow_path, 'w') as f:
+207         f.write(issue_workflow_content)
+208     
+209     logger.info(f"Generated workflow files in {workflows_dir}")
+210     
+211     return {
+212         memory_workflow_path: memory_workflow_content,
+213         issue_workflow_path: issue_workflow_content
+214     }
+215 
+216 def main() -> None:
+217     """Command line interface for GitHub workflow generator."""
+218     parser = argparse.ArgumentParser(description="Generate GitHub Actions workflows for bella-issues-bot integration")
+219     parser.add_argument("--output", "-o", type=str, default=".", help="Output directory (default: current directory)")
+220     parser.add_argument("--memory-branch", "-mb", type=str, default="main", help="Branch that triggers memory initialization (default: main)")
+221     parser.add_argument("--base-branch", "-bb", type=str, default="main", help="Base branch for pull requests (default: main)")
+222     parser.add_argument("--model", "-m", type=str, default="gpt-4o", help="Default model for all operations (default: gpt-4o)")
+223     parser.add_argument("--core-model", "--cm", type=str, help="Model for core operations (defaults to --model)")
+224     parser.add_argument("--data-model", "--dm", type=str, help="Model for data operations (defaults to --model)")
+225     parser.add_argument("--temperature", "-t", type=float, default=0.7, help="Default temperature for all models (default: 0.7)")
+226     parser.add_argument("--core-temperature", "--ct", type=float, help="Temperature for core model (defaults to --temperature)")
+227     parser.add_argument("--data-temperature", "--dt", type=float, help="Temperature for data model (defaults to --temperature)")
+228     parser.add_argument("--package-version", "-v", type=str, default="", help="Specific package version to install (e.g. '0.1.1')")
+229     parser.add_argument("--log-level", "-l", type=str, choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="Logging level")
+230     
+231     args = parser.parse_args()
+232     
+233     # Setup logging
+234     import logging
+235     setup_logging(log_level=getattr(logging, args.log_level))
+236     
+237     # Generate workflow files
+238     try:
+239         generate_workflow_files(
+240             output_dir=args.output,
+241             memory_branch=args.memory_branch,
+242             base_branch=args.base_branch,
+243             model=args.model,
+244             core_model=args.core_model,
+245             data_model=args.data_model,
+246             temperature=args.temperature,
+247             core_temperature=args.core_temperature,
+248             data_temperature=args.data_temperature,
+249             package_version=args.package_version
+250         )
+251         logger.info("Successfully generated GitHub workflow files")
+252     except Exception as e:
+253         logger.error(f"Error generating workflow files: {str(e)}")
+254         sys.exit(1)
+255 
+256 if __name__ == "__main__":
+257     main()
+258
+```
+
+
+
+
+```
+File: client/README_GITHUB_WORKFLOWS.md
+1 # GitHub工作流生成器
+2 
+3 bella-issues-bot 提供了自动生成 GitHub Actions 工作流配置的功能，可以轻松将 AI 助手集成到您的 GitHub 项目中。
+4 
+5 ## 功能概述
+6 
+7 工作流生成器会创建两个GitHub Actions工作流文件：
+8 
+9 1. **记忆初始化工作流** (`memory_init.yml`)
+10    - 当指定分支有推送时触发
+11    - 自动分析项目文件并生成文件描述
+12    - 将记忆文件提交回仓库
+13 
+14 2. **Issue处理工作流** (`issue_process.yml`)
+15    - 在创建新Issue或添加评论时触发
+16    - 自动提取Issue或评论中的需求
+17    - 在专用分支上处理需求并实现代码
+18    - 创建拉取请求，提供解决方案
+19    - 在Issue中添加处理结果的评论
+20 
+21 ## 命令行使用方式
+22 
+23 
+24
+```
+
+
+
+
+```
+File: scripts/generate_workflows.sh
+1 #!/bin/bash
+2 
+3 # Script to generate GitHub workflow files for bella-issues-bot integration
+4 # This script provides a simple interface to the workflow generator
+5 
+6 show_help() {
+7     echo "Usage: $0 [options]"
+8     echo ""
+9     echo "Options:"
+10     echo "  -o, --output DIR        Output directory (default: current directory)"
+11     echo "  -mb, --memory-branch    Branch that triggers memory initialization (default: main)"
+12     echo "  -bb, --base-branch      Base branch for pull requests (default: main)"
+13     echo "  -m, --model MODEL       Default model for all operations (default: gpt-4o)"
+14     echo "  -t, --temp VALUE        Default temperature setting (default: 0.7)"
+15     echo "  -v, --version VERSION   Specific package version to install (e.g. '0.1.1')"
+16     echo "  -h, --help              Show this help message"
+17     echo ""
+18     echo "Additional options like --core-model, --data-model, etc. are also supported."
+19     echo "Run 'bella-github-workflows --help' for complete details."
+20     echo ""
+21 }
+22 
+23 if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+24     show_help
+25     exit 0
+26 fi
+27 
+28 # Pass all arguments to the Python module
+29 python -m client.github_workflow_generator "$@"
+30
+```
+
+
+
+
+```
+File: client/__init__.py
+1 """Client package for running the WorkflowEngine from the terminal."""
+2 
+3 # Export file memory functions for programmatic use
+4 from client.file_memory_client import initialize_file_memory, update_file_descriptions, process_failed_files
+5 from client.github_workflow_generator import generate_workflow_files
+6
+```
+
+
+
+
+```
+File: pyproject.toml
+1 [tool.poetry]
+2 name = "bella-issues-bot"
+3 version = "0.1.1"
+4 description = "bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：个人开发助手模式：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。GitHub自动化模式：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。"
+5 authors = ["saizhuolin"]
+6 license = "MIT"
+7 readme = "README.md"
+8 homepage = "https://github.com/szl97/bella-issues-bot"
+9 repository = "https://github.com/szl97/bella-issues-bot"
+10 documentation = "https://github.com/szl97/bella-issues-bot"
+11 packages = [
+12     {include = "core"},
+13     {include = "client"}
+14 ]
+15 include = [
+16     "system.txt"
+17 ]
+18 classifiers = [
+19   "Development Status :: 4 - Beta",
+20   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+21 ]
+22 
+23 [build-system]
+24 requires = ["poetry-core>=1.0.0"]
+25 build-backend = "poetry.core.masonry.api"
+26 
+27 [tool.poetry.dependencies]
+28 python = ">=3.10,<3.13"
+29 gitpython = "^3.1.40"
+30 PyGithub = "^2.1.1"
+31 langchain = ">=0.3.0,<0.4.0"
+32 langchain-openai = ">=0.1.0"
+33 langchain-core = ">=0.3.0,<0.4.0"
+34 langchain-community = ">=0.3.0,<0.4.0"
+35 python-dotenv = "^1.0.0"
+36 pydantic = "^2.5.0"
+37 openai = "^1.3.5"
+38 pytest = "^7.4.0"
+39 pathspec = ">=0.9.0"
+40 toml = ">=0.10.2"
+41 typing-extensions = ">=4.0.0"
+42 jinja2 = ">=3.1.0,<4.0.0"
+43 colorlog = ">=6.8.0,<7.0.0"
+44 colorama = ">=0.4.4"
+45 argparse = ">=1.4.0"
+46 pyyaml = ">=6.0"
+47 
+48 [tool.poetry.scripts]
+49 bella-issues-bot = 'client.terminal:run_workflow_from_terminal'
+50 bella-file-memory = 'client.file_memory_client:main'
+51 bella-github-workflows = 'client.github_workflow_generator:main'
+52 
+53 [tool.ruff]
+54 select = ["F", "E", "W", "I001"]
+55 show-fixes = false
+56 target-version = "py310"
+57 task-tags = ["TODO", "FIXME"]
+58 extend-ignore = ["E501", "E722"]
+59 
+60 [tool.black]
+61 target-version = ["py310"]
+62 
+63 [tool.ruff.isort]
+64 known-first-party = []
+65 known-third-party = []
+66 section-order = [
+67   "future",
+68   "standard-library",
+69   "third-party",
+70   "first-party",
+71   "local-folder",
+72 ]
+73 combine-as-imports = true
+74 split-on-trailing-comma = false
+75 lines-between-types = 1
+76
+```
+
+
+
+
+```
+File: client/file_memory_client.py
+1 """
+2 File Memory Client
+3 
+4 A standalone client for initializing and managing FileMemory using only GitManager.
+5 This module provides both CLI and programmatic interfaces for updating file descriptions.
+6 """
+7 
+8 import argparse
+9 import logging
+10 import os
+11 import sys
+12 from typing import Dict, List, Optional
+13 
+14 from dotenv import load_dotenv
+15 
+16 from core.ai import AIConfig
+17 from core.file_memory import FileMemory, FileMemoryConfig
+18 from core.git_manager import GitManager, GitConfig
+19 from core.log_config import setup_logging, get_logger
+20 
+21 logger = get_logger(__name__)
+22 
+23 
+24 def initialize_file_memory(
+25     project_dir: str,
+26     model_name: str = "gpt-4o",
+27     temperature: float = 0.7,
+28     api_key: Optional[str] = None,
+29     base_url: Optional[str] = None,
+30     remote_url: Optional[str] = None,
+31     auth_token: Optional[str] = None,
+32 ) -> FileMemory:
+33     """
+34     Initialize FileMemory using GitManager without LogManager.
+35     
+36     Args:
+37         project_dir: Path to the project directory
+38         model_name: AI model to use for generating file descriptions
+39         temperature: Temperature setting for AI responses
+40         api_key: API key for AI service (will use env var if None)
+41         base_url: Base URL for AI service (will use default if None)
+42         remote_url: Git remote URL (will use env var if None)
+43         auth_token: Git authentication token (will use env var if None)
+44         
+45     Returns:
+46         Initialized FileMemory instance
+47     """
+48     # Create AI config
+49     ai_config = AIConfig(
+50         model_name=model_name,
+51         temperature=temperature,
+52         api_key=api_key,
+53         base_url=base_url
+54     )
+55     
+56     # Create Git config
+57     git_config = GitConfig(
+58         repo_path=project_dir,
+59         remote_url=remote_url or os.getenv("GIT_REMOTE_URL"),
+60         auth_token=auth_token or os.getenv("GITHUB_TOKEN")
+61     )
+62     
+63     # Initialize Git manager
+64     git_manager = GitManager(config=git_config)
+65     
+66     # Initialize and return FileMemory
+67     file_memory_config = FileMemoryConfig(
+68         project_dir=project_dir,
+69         git_manager=git_manager,
+70         ai_config=ai_config,
+71         log_manager=None  # Explicitly set to None as per requirements
+72     )
+73     
+74     return FileMemory(config=file_memory_config)
+75 
+76 
+77 def update_file_descriptions(file_memory: FileMemory) -> None:
+78     """
+79     Update file descriptions using the given FileMemory instance.
+80     
+81     Args:
+82         file_memory: Initialized FileMemory instance
+83         
+84     Returns:
+85         Dictionary mapping file paths to their descriptions
+86     """
+87     return file_memory.update_file_details()
+88 
+89 
+90 def process_failed_files(file_memory: FileMemory) -> Dict[str, str]:
+91     """
+92     Process previously failed files to generate their descriptions.
+93     
+94     Args:
+95         file_memory: Initialized FileMemory instance
+96         
+97     Returns:
+98         Dictionary mapping file paths to their descriptions
+99     """
+100     return file_memory.process_failed_files()
+101 
+102 
+103 def main() -> None:
+104     """Command line interface for FileMemory client."""
+105     # Load environment variables
+106     load_dotenv()
+107     
+108     # Parse command line arguments
+109     parser = argparse.ArgumentParser(description="FileMemory Client - Update file descriptions for a project")
+110     parser.add_argument("-d", "--directory", default=".", help="Project directory path (default: current directory)")
+111     parser.add_argument("-m", "--model", default="gpt-4o", help="AI model name (default: gpt-4o)")
+112     parser.add_argument("-t", "--temperature", type=float, default=0.7, help="AI temperature (default: 0.7)")
+113     parser.add_argument("-k", "--api-key", help="OpenAI API key (defaults to OPENAI_API_KEY env var)")
+114     parser.add_argument("-u", "--base-url", help="Base URL for API calls (optional)")
+115     parser.add_argument("--git-url", help="Git remote URL (defaults to GIT_REMOTE_URL env var)")
+116     parser.add_argument("--git-token", help="Git auth token (defaults to GITHUB_TOKEN env var)")
+117     parser.add_argument("-l", "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="Logging level")
+118     parser.add_argument("--failed-only", action="store_true", help="Process only previously failed files")
+119     args = parser.parse_args()
+120     
+121     # Setup logging
+122     setup_logging(log_level=getattr(logging, args.log_level))
+123     
+124     # Get absolute path for project directory
+125     project_dir = os.path.abspath(args.directory)
+126     if not os.path.isdir(project_dir):
+127         logger.error(f"Project directory does not exist: {project_dir}")
+128         sys.exit(1)
+129     
+130     logger.info(f"Initializing FileMemory for project: {project_dir}")
+131     
+132     # Initialize FileMemory
+133     file_memory = initialize_file_memory(
+134         project_dir=project_dir,
+135         model_name=args.model,
+136         temperature=args.temperature,
+137         api_key=args.api_key,
+138         base_url=args.base_url,
+139         remote_url=args.git_url,
+140         auth_token=args.git_token
+141     )
+142     
+143     # Update file details or process failed files
+144     if args.failed_only:
+145         process_failed_files(file_memory)
+146         logger.info("Processed failed files")
+147     else:
+148         update_file_descriptions(file_memory)
+149         logger.info("Updated descriptions files")
+150 
+151 
+152 if __name__ == "__main__":
+153     main()
+154
+```
+
+
+
+
+```
+File: core/git_manager.py
+1 import os
+2 import shutil
+3 from dataclasses import dataclass
+4 from typing import Optional, List
+5 from urllib.parse import urlparse, urlunparse
+6 
+7 import git
+8 
+9 from core.log_config import get_logger
+10 
+11 logger = get_logger(__name__)
+12 
+13 
+14 @dataclass
+15 class GitConfig:
+16     """Git configuration parameters"""
+17 
+18     repo_path: str
+19     remote_name: str = "origin"
+20     default_branch: str = "main"
+21     remote_url: Optional[str] = os.getenv("GIT_REMOTE")
+22     auth_token: Optional[str] = os.getenv("GITHUB_TOKEN")
+23 
+24 
+25 class GitManager:
+26     """Manages git operations including push, pull, branch creation and switching"""
+27 
+28     def __init__(self, config: GitConfig):
+29         """Initialize GitManager with configuration"""
+30         self.config = config
+31         self.repo = None
+32         self._ensure_repo()
+33 
+34     def _ensure_repo(self) -> None:
+35         """Ensure git repository exists and is properly initialized"""
+36         if not os.path.exists(self.config.repo_path):
+37             if self.config.remote_url:
+38                 self.clone()
+39             else:
+40                 raise ValueError(
+41                     f"Repository path does not exist: {self.config.repo_path}"
+42                 )
+43         else:
+44             try:
+45                 self.repo = git.Repo(self.config.repo_path)
+46                 # Set auth token for remote operations if provided
+47                 if self.config.auth_token and self.config.remote_url:
+48                     self._set_remote_with_auth()
+49             except git.InvalidGitRepositoryError:
+50                 raise ValueError(
+51                     f"Invalid git repository at: {self.config.repo_path}"
+52                 )
+53 
+54 
+55     def _get_url_with_token(self, url: str) -> str:
+56         """
+57         Insert authentication token into git URL
+58 
+59         Args:
+60             url: Original git URL
+61 
+62         Returns:
+63             URL with authentication token
+64         """
+65         if not self.config.auth_token:
+66             return url
+67 
+68         parsed = urlparse(url)
+69 
+70         # Handle different URL formats
+71         if parsed.scheme in ["http", "https"]:
+72             netloc = f"{self.config.auth_token}@{parsed.netloc}"
+73             return urlunparse(
+74                 (
+75                     parsed.scheme,
+76                     netloc,
+77                     parsed.path,
+78                     parsed.params,
+79                     parsed.query,
+80                     parsed.fragment,
+81                 )
+82             )
+83         elif "@" in url and ":" in url and url.startswith("git@"):  # Handle SSH format: git@github.com:username/repo.git
+84             return url  # Don't modify SSH URLs
+85         else:
+86             return url  # Return original if format is not recognized
+87 
+88     def _set_remote_with_auth(self) -> None:
+89         """Configure remote with authentication token"""
+90         if not self.repo or not self.config.auth_token or not self.config.remote_url:
+91             return
+92 
+93         try:
+94             # Get current remotes
+95             remotes = list(self.repo.remotes)
+96             remote_exists = any(
+97                 remote.name == self.config.remote_name for remote in remotes
+98             )
+99 
+100             # Prepare URL with token
+101             url_with_token = self._get_url_with_token(self.config.remote_url)
+102 
+103             # Set or update remote
+104             if remote_exists:
+105                 self.repo.git.remote("set-url", self.config.remote_name, url_with_token)
+106             else:
+107                 self.repo.git.remote("add", self.config.remote_name, url_with_token)
+108 
+109             logger.info(
+110                 f"Configured remote '{self.config.remote_name}' with authentication"
+111             )
+112         except git.GitCommandError as e:
+113             logger.error(f"Failed to configure remote with authentication: {str(e)}")
+114             raise
+115 
+116     def clone(self) -> None:
+117         """
+118         Clone the repository specified in config
+119 
+120         Raises:
+121             ValueError: If remote_url is not set in config
+122             git.GitCommandError: If clone operation fails
+123         """
+124         if not self.config.remote_url:
+125             raise ValueError("Remote URL must be set to clone a repository")
+126 
+127         self._clone_repo(branch=self.config.default_branch)
+128 
+129     def _clone_repo(self, branch: Optional[str] = None) -> None:
+130         """
+131         Internal method to perform the clone operation
+132 
+133         Args:
+134             branch: Branch to checkout after cloning
+135         """
+136         try:
+137             # Prepare parent directory if it doesn't exist
+138             parent_dir = os.path.dirname(self.config.repo_path)
+139             if parent_dir and not os.path.exists(parent_dir):
+140                 os.makedirs(parent_dir)
+141 
+142             # Remove target directory if it exists
+143             if os.path.exists(self.config.repo_path):
+144                 shutil.rmtree(self.config.repo_path)
+145 
+146             # Prepare URL with token if provided
+147             clone_url = self._get_url_with_token(self.config.remote_url)
+148 
+149             # Clone options
+150             clone_args = {
+151                 "url": clone_url,
+152                 "to_path": self.config.repo_path,
+153             }
+154 
+155             # Add branch if specified
+156             if branch:
+157                 clone_args["branch"] = branch
+158 
+159             # Clone the repository
+160             self.repo = git.Repo.clone_from(**clone_args)
+161 
+162             logger.info(f"Successfully cloned repository to {self.config.repo_path}")
+163 
+164             # Configure remote with auth token if provided
+165             if self.config.auth_token:
+166                 self._set_remote_with_auth()
+167 
+168         except git.GitCommandError as e:
+169             logger.error(f"Failed to clone repository: {str(e)}")
+170             # Clean up if clone failed
+171             if os.path.exists(self.config.repo_path):
+172                 shutil.rmtree(self.config.repo_path)
+173             raise
+174 
+175     def pull(self, branch: Optional[str] = None) -> None:
+176         """
+177         Pull changes from remote repository
+178 
+179         Args:
+180             branch: Branch to pull from. If None, pulls current branch
+181         """
+182         try:
+183             if branch:
+184                 self.repo.git.pull(self.config.remote_name, branch)
+185             else:
+186                 self.repo.git.pull()
+187             logger.info(
+188                 f"Successfully pulled changes from {branch or 'current branch'}"
+189             )
+190         except git.GitCommandError as e:
+191             logger.error(f"Failed to pull changes: {str(e)}")
+192             raise
+193 
+194     def push(
+195         self,
+196         branch: Optional[str] = None,
+197         force: bool = False,
+198         set_upstream: bool = True,
+199     ) -> None:
+200         """
+201         Push changes to remote repository
+202 
+203         Args:
+204             branch: Branch to push. If None, pushes current branch
+205             force: Whether to force push
+206             set_upstream: Whether to set upstream branch if it doesn't exist
+207         """
+208         try:
+209             # 确保远程 URL 包含认证令牌
+210             if self.config.auth_token:
+211                 self._set_remote_with_auth()
+212 
+213             # 如果没有指定分支，获取当前分支
+214             current_branch = branch or self.get_current_branch()
+215 
+216             # 执行推送操作
+217             if force:
+218                 if set_upstream:
+219                     self.repo.git.push(
+220                         "-f", "--set-upstream", self.config.remote_name, current_branch
+221                     )
+222                 else:
+223                     if branch:
+224                         self.repo.git.push("-f", self.config.remote_name, branch)
+225                     else:
+226                         self.repo.git.push("-f")
+227             else:
+228                 if set_upstream:
+229                     self.repo.git.push(
+230                         "--set-upstream", self.config.remote_name, current_branch
+231                     )
+232                 else:
+233                     if branch:
+234                         self.repo.git.push(self.config.remote_name, branch)
+235                     else:
+236                         self.repo.git.push()
+237 
+238             logger.info(f"Successfully pushed changes to {current_branch}")
+239         except git.GitCommandError as e:
+240             logger.error(f"Failed to push changes: {str(e)}")
+241             raise
+242 
+243     def create_branch(
+244         self, branch_name: str, start_point: Optional[str] = None
+245     ) -> None:
+246         """
+247         Create a new branch
+248 
+249         Args:
+250             branch_name: Name of the new branch
+251             start_point: Branch/commit to create branch from. If None, uses current HEAD
+252         """
+253         try:
+254             if start_point:
+255                 self.repo.git.branch(branch_name, start_point)
+256             else:
+257                 self.repo.git.branch(branch_name)
+258             logger.info(f"Successfully created branch: {branch_name}")
+259         except git.GitCommandError as e:
+260             logger.error(f"Failed to create branch: {str(e)}")
+261             raise
+262 
+263     def switch_branch(self, branch_name: str, create: bool = False) -> None:
+264         """
+265         Switch to specified branch
+266 
+267         Args:
+268             branch_name: Name of the branch to switch to
+269             create: Create branch if it doesn't exist
+270         """
+271         try:
+272             if create:
+273                 try:
+274                     self.repo.git.checkout("-b", branch_name)
+275                 except:
+276                     self.repo.git.checkout(branch_name)
+277             else:
+278                 self.repo.git.checkout(branch_name)
+279             logger.info(f"Successfully switched to branch: {branch_name}")
+280         except git.GitCommandError as e:
+281             logger.error(f"Failed to switch branch: {str(e)}")
+282             raise
+283 
+284     def delete_branch(self, branch_name: str, force: bool = False) -> None:
+285         """
+286         Delete specified branch
+287 
+288         Args:
+289             branch_name: Name of the branch to delete
+290             force: Force delete even if branch not fully merged
+291         """
+292         try:
+293             if force:
+294                 self.repo.git.branch("-D", branch_name)
+295             else:
+296                 self.repo.git.branch("-d", branch_name)
+297             logger.info(f"Successfully deleted branch: {branch_name}")
+298         except git.GitCommandError as e:
+299             logger.error(f"Failed to delete branch: {str(e)}")
+300             raise
+301 
+302     def get_current_branch(self) -> str:
+303         """Get name of current branch"""
+304         return self.repo.active_branch.name
+305 
+306     def list_branches(self, remote: bool = False) -> List[str]:
+307         """
+308         List all branches
+309 
+310         Args:
+311             remote: Whether to list remote branches instead of local
+312 
+313         Returns:
+314             List of branch names
+315         """
+316         if remote:
+317             return [ref.name for ref in self.repo.remote().refs]
+318         return [branch.name for branch in self.repo.heads]
+319 
+320     def get_current_commit_id(self) -> str:
+321         """获取当前提交的 ID"""
+322         try:
+323             return self.repo.head.commit.hexsha
+324         except Exception as e:
+325             logger.error(f"获取当前提交 ID 失败: {str(e)}")
+326             return ""
+327 
+328     def get_changed_files(self, old_commit: str, new_commit: str) -> List[str]:
+329         """
+330         获取两个提交之间变更的文件列表
+331 
+332         Args:
+333             old_commit: 旧提交的 ID
+334             new_commit: 新提交的 ID
+335 
+336         Returns:
+337             变更的文件路径列表
+338         """
+339         try:
+340             # 获取提交对象
+341             old = self.repo.commit(old_commit)
+342             new = self.repo.commit(new_commit)
+343 
+344             # 获取差异
+345             diff_index = old.diff(new)
+346 
+347             # 收集所有变更的文件
+348             changed_files = set()
+349 
+350             # 添加修改的文件
+351             for diff in diff_index.iter_change_type("M"):
+352                 if not self.is_ignore(diff.a_path):
+353                     changed_files.add(diff.a_path)
+354 
+355             # 添加增加的文件
+356             for diff in diff_index.iter_change_type("A"):
+357                 if not self.is_ignore(diff.b_path):
+358                     changed_files.add(diff.b_path)
+359 
+360             # 添加删除的文件
+361             for diff in diff_index.iter_change_type("D"):
+362                 if not self.is_ignore(diff.b_path):
+363                     changed_files.add(diff.a_path)
+364 
+365             return list(changed_files)
+366         except Exception as e:
+367             logger.error(f"获取变更文件列表失败: {str(e)}")
+368             return []
+369 
+370     def is_ignore(self, path: str) -> bool:
+371         # 检查文件名是否以点开头
+372         file_name = os.path.basename(path)
+373         if file_name.startswith("."):
+374             return True
+375         # 检查路径中是否包含以点开头的目录
+376         path_parts = path.split(os.path.sep)
+377         for part in path_parts:
+378             # 跳过空字符串（可能出现在路径开头）
+379             if not part:
+380                 continue
+381             # 如果目录名以点开头，则忽略
+382             if part.startswith("."):
+383                 return True
+384 
+385         # 如果不满足任何忽略条件，则不忽略
+386         return False
+387 
+388     def delete_local_repository(self, remove_git_config: bool = False) -> None:
+389         """
+390         删除本地代码仓库和可选的全局 git 配置
+391 
+392         Args:
+393             remove_git_config: 是否同时删除与此仓库相关的全局 git 配置
+394 
+395         Raises:
+396             ValueError: 如果仓库路径不存在
+397             OSError: 如果删除操作失败
+398         """
+399         if not os.path.exists(self.config.repo_path):
+400             logger.warning(f"仓库路径不存在，无需删除: {self.config.repo_path}")
+401             return
+402 
+403         try:
+404             # 关闭仓库连接以释放文件锁
+405             if self.repo:
+406                 self.repo.close()
+407                 self.repo = None
+408 
+409             # 删除本地仓库目录
+410             shutil.rmtree(self.config.repo_path)
+411             logger.info(f"成功删除本地仓库: {self.config.repo_path}")
+412 
+413             # 可选：删除全局 git 配置中与此仓库相关的条目
+414             if remove_git_config:
+415                 self._remove_git_config()
+416 
+417         except (OSError, shutil.Error) as e:
+418             logger.error(f"删除本地仓库失败: {str(e)}")
+419             raise
+420 
+421     def _remove_git_config(self) -> None:
+422         """
+423         从全局 git 配置中删除与当前仓库相关的配置
+424 
+425         这包括：
+426         - 与远程仓库 URL 相关的凭证
+427         - 特定于此仓库的用户配置
+428         """
+429         try:
+430             # 获取仓库的规范路径
+431             repo_path = os.path.abspath(self.config.repo_path)
+432             repo_name = os.path.basename(repo_path)
+433 
+434             # 尝试从 git 配置中删除与此仓库相关的条目
+435             if self.config.remote_url:
+436                 # 解析远程 URL 以获取主机名
+437                 parsed = urlparse(self.config.remote_url)
+438                 if parsed.netloc:
+439                     # 尝试删除凭证
+440                     try:
+441                         git.cmd.Git().execute(
+442                             ["git", "credential", "reject"],
+443                             input=f"url={self.config.remote_url}\n\n",
+444                         )
+445                         logger.info(f"已尝试从凭证存储中删除 {parsed.netloc} 的凭证")
+446                     except git.GitCommandError:
+447                         logger.debug("凭证删除操作未成功，可能没有存储凭证")
+448 
+449             # 尝试删除仓库特定的配置（如果有）
+450             try:
+451                 git.cmd.Git().execute(
+452                     [
+453                         "git",
+454                         "config",
+455                         "--global",
+456                         "--remove-section",
+457                         f"remote.{repo_name}",
+458                     ]
+459                 )
+460                 logger.info(f"已删除全局 git 配置中的 remote.{repo_name} 部分")
+461             except git.GitCommandError:
+462                 logger.debug(f"全局配置中没有 remote.{repo_name} 部分")
+463 
+464             logger.info("已完成 git 配置清理")
+465 
+466         except Exception as e:
+467             logger.warning(f"清理 git 配置时出错: {str(e)}")
+468             # 不抛出异常，因为这是次要操作
+469 
+470     def add_issue_comment(self, issue_number: int, comment_text: str) -> bool:
+471         """
+472         在 GitHub 仓库的指定 Issue 下添加评论
+473 
+474         Args:
+475             issue_number: Issue 编号
+476             comment_text: 评论内容
+477 
+478         Returns:
+479             bool: 操作是否成功
+480 
+481         Raises:
+482             ValueError: 如果未配置认证令牌或远程 URL
+483             Exception: 如果添加评论过程中发生其他错误
+484         """
+485         try:
+486             # 检查必要的配置
+487             if not self.config.auth_token:
+488                 raise ValueError("添加 Issue 评论需要认证令牌 (auth_token)")
+489 
+490             if not self.config.remote_url:
+491                 raise ValueError("添加 Issue 评论需要远程仓库 URL (remote_url)")
+492 
+493             # 导入 PyGithub
+494             try:
+495                 from github import Github
+496             except ImportError:
+497                 raise ImportError("添加 Issue 评论需要安装 PyGithub 库: pip install PyGithub")
+498 
+499             # 解析仓库所有者和名称
+500             parsed_url = urlparse(self.config.remote_url)
+501             path_parts = parsed_url.path.strip("/").split("/")
+502 
+503             if len(path_parts) < 2 or not all(path_parts[:2]):
+504                 raise ValueError(f"无法从 URL 解析仓库所有者和名称: {self.config.remote_url}")
+505 
+506             owner = path_parts[0]
+507             repo_name = path_parts[1]
+508             if repo_name.endswith(".git"):
+509                 repo_name = repo_name[:-4]  # 移除 .git 后缀
+510 
+511             # 初始化 GitHub 客户端
+512             g = Github(self.config.auth_token)
+513 
+514             # 获取仓库和 Issue
+515             repo = g.get_repo(f"{owner}/{repo_name}")
+516             issue = repo.get_issue(issue_number)
+517 
+518             # 添加评论
+519             comment = issue.create_comment(f"bella-issues-bot已处理：\n{comment_text}")
+520 
+521             logger.info(f"成功在 Issue #{issue_number} 下添加评论 (ID: {comment.id})")
+522             return True
+523 
+524         except Exception as e:
+525             logger.error(f"添加 Issue 评论失败: {str(e)}")
+526             raise
+527 
+528     def commit(
+529         self, message: str, add_all: bool = True, files: Optional[List[str]] = None
+530     ) -> str:
+531         """
+532         创建一个新的提交
+533 
+534         Args:
+535             message: 提交信息
+536             add_all: 是否添加所有变更的文件，默认为 True
+537             files: 要添加的特定文件列表，如果 add_all 为 True 则忽略此参数
+538 
+539         Returns:
+540             str: 新提交的 SHA 哈希值
+541 
+542         Raises:
+543             git.GitCommandError: 如果 Git 操作失败
+544         """
+545         try:
+546             # 添加文件到暂存区
+547             if add_all:
+548                 self.repo.git.add(A=True)
+549             elif files:
+550                 for file in files:
+551                     self.repo.git.add(file)
+552 
+553             # 创建提交
+554             commit = self.repo.index.commit(message)
+555             logger.info(f"成功创建提交: {commit.hexsha[:7]} - {message}")
+556 
+557             return commit.hexsha
+558         except git.GitCommandError as e:
+559             logger.error(f"创建提交失败: {str(e)}")
+560             raise
+561 
+562     def reset_to(self, target_branch: str) -> bool:
+563         """
+564         将当前分支重置到远程目标分支的状态
+565 
+566         Args:
+567             target_branch: 目标分支名称
+568 
+569         Returns:
+570             bool: 操作是否成功
+571         """
+572         try:
+573             # 获取远程分支
+574             remote_name = self.config.remote_name
+575             remote_branches = self.list_branches(remote=True)
+576             remote_target = f"{remote_name}/{target_branch}"
+577             # 检查目标分支是否存在于远端
+578             if remote_target not in remote_branches:
+579                 logger.warning(f"目标分支 {remote_target} 不存在于远端")
+580                 return False
+581 
+582             # 切换到目标分支，如果不存在则创建
+583             logger.info(f"切换到分支: {target_branch}")
+584             self.switch_branch(target_branch, create=True)
+585 
+586             # 拉取最新代码
+587             logger.info(f"拉取远程分支: {remote_target} 的最新代码")
+588             self.pull(target_branch)
+589 
+590             # 强制重置到远程分支状态
+591             logger.info(f"重置到远程分支: {remote_target}")
+592             self.repo.git.reset(f"{remote_target}", hard=True)
+593 
+594             logger.info(f"成功重置到版本: {target_branch}")
+595             return True
+596         except git.GitCommandError as e:
+597             logger.error(f"重置到分支 {target_branch} 失败: {str(e)}")
+598             return False
+599         except Exception as e:
+600             logger.error(f"重置过程中发生未知错误: {str(e)}")
+601             return False
+602 
+603     def reset_to_issue_branch(self, issue_id: int) -> str:
+604         """
+605         拉取指定issue对应的最新分支并切换到该分支
+606         如果该issue还未创建过分支，则切换到默认分支
+607 
+608         Args:
+609             issue_id: Issue编号
+610 
+611         Returns:
+612             str: 成功切换到的分支名称
+613 
+614         Raises:
+615             git.GitCommandError: 如果Git操作失败
+616         """
+617         try:
+618             # 确保远程仓库信息是最新的
+619             self.repo.git.fetch(self.config.remote_name)
+620             logger.info(f"成功获取远程仓库信息")
+621             
+622             # 获取所有远程分支
+623             remote_branches = self.repo.git.branch("-r").splitlines()
+624             remote_branches = [branch.strip() for branch in remote_branches]
+625             
+626             # 查找与指定issue相关的分支
+627             issue_branch_name = f"bella-issues-bot-{issue_id}"
+628             remote_issue_branch = f"{self.config.remote_name}/{issue_branch_name}"
+629             
+630             branch_exists = False
+631             for branch in remote_branches:
+632                 if remote_issue_branch in branch:
+633                     branch_exists = True
+634                     break
+635                     
+636             if branch_exists:
+637                 # 切换到issue分支
+638                 self.switch_branch(issue_branch_name, create=True)
+639                 self.pull()
+640                 logger.info(f"成功切换到issue #{issue_id}的分支: {issue_branch_name}")
+641             else:
+642                 # 如果没有找到相关分支，切换到默认分支
+643                 self.switch_branch(self.config.default_branch)
+644                 self.pull()
+645                 logger.info(f"重置到远程分支: {self.config.remote_name}/{self.config.default_branch}")
+646                 self.repo.git.reset(f"{self.config.remote_name}/{self.config.default_branch}", hard=True)
+647                 logger.info(f"未找到issue #{issue_id}的分支，已切换到默认分支: {self.config.default_branch}")
+648             
+649             return issue_branch_name
+650         except git.GitCommandError as e:
+651             logger.error(f"切换到issue分支时出错: {str(e)}")
+652             raise
+653
+```
+
+
+
+
+```
+File: core/workflow_engine.py
+1 import os
+2 import shutil
+3 import tempfile
+4 import uuid
+5 from dataclasses import dataclass
+6 from typing import Optional
+7 
+8 from core.ai import AIConfig
+9 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+10 from core.code_engineer import CodeEngineer, CodeEngineerConfig
+11 from core.decision import DecisionProcess
+12 from core.diff import Diff
+13 from core.file_memory import FileMemory, FileMemoryConfig
+14 from core.file_selector import FileSelector
+15 from core.git_manager import GitManager, GitConfig
+16 from core.log_config import get_logger
+17 from core.log_manager import LogManager, LogConfig
+18 from core.prompt_generator import PromptGenerator, PromptData
+19 from core.version_manager import VersionManager
+20 
+21 logger = get_logger(__name__)
+22 
+23 @dataclass
+24 class WorkflowEngineConfig:
+25     project_dir: str
+26     issue_id:int
+27     core_model:str = "gpt-4o"
+28     data_model:str = "gpt-4o"
+29     core_template: float = 0.7
+30     data_template: float = 0.7
+31     max_retry: int = 3,
+32     default_branch: str = "main"
+33     mode: str = "client" # ["client", "bot"] bot模式下，每次进行工作时，会hard reset到issues的最新分支上
+34     base_url: Optional[str] = None
+35     api_key: Optional[str] = None
+36     github_remote_url: Optional[str] =None
+37     github_token: Optional[str] = None
+38 
+39 
+40 class WorkflowEngine:
+41     CODE_TIMES = 0
+42     CHAT_TIMES = 0
+43     """
+44     工作流引擎，协调版本管理、日志管理和AI交互
+45     """
+46     def __init__(self, config: WorkflowEngineConfig):
+47         """
+48         初始化工作流引擎
+49         
+50         Args:
+51             config: 工作流配置
+52         """
+53         self.CODE_TIMES = 0
+54         self.CHAT_TIMES = 0
+55         # 存储原始配置
+56         self.original_config = config
+57         
+58         # 根据模式设置工作目录
+59         if config.mode == "bot":
+60             # 创建临时目录作为工作区
+61             self.temp_dir = os.path.join(
+62                 tempfile.gettempdir(), 
+63                 f"bella-bot-{config.issue_id}-{str(uuid.uuid4())[:8]}"
+64             )
+65             os.makedirs(self.temp_dir, exist_ok=True)
+66             # 更新配置以使用临时目录
+67             self.config = WorkflowEngineConfig(
+68                 project_dir=self.temp_dir,
+69                 **{k: v for k, v in vars(config).items() if k != 'project_dir'}
+70             )
+71             logger.info(f"Bot模式：创建临时工作目录 {self.temp_dir}")
+72         else:
+73             # 客户端模式直接使用指定的目录
+74             self.config = config
+75             self.temp_dir = None
+76 
+77         self.project_dir = os.path.abspath(self.config.project_dir)
+78         # 创建AI配置
+79         self.core_ai_config = AIConfig(
+80             model_name=config.core_model,
+81             temperature=config.core_template,
+82             base_url=config.base_url,
+83             api_key=config.api_key
+84         )
+85         
+86         self.data_ai_config = AIConfig(
+87             model_name=config.data_model,
+88             temperature=config.data_template,
+89             base_url=config.base_url,
+90             api_key=config.api_key
+91         )
+92         
+93         # 创建Git配置
+94         self.git_config = GitConfig(
+95             repo_path=self.project_dir,
+96             remote_url=config.github_remote_url or os.getenv("GIT_REMOTE"),
+97             auth_token=config.github_token or os.getenv("GITHUB_TOKEN"),
+98             default_branch=config.default_branch
+99         )
+100         
+101         # 创建日志配置
+102         self.log_config = LogConfig(
+103             project_dir=self.project_dir,
+104             issue_id=config.issue_id,
+105             mode=config.mode
+106         )
+107         
+108         # 初始化管理器
+109         self.git_manager = GitManager(config=self.git_config)
+110         self.log_manager = LogManager(config=self.log_config)
+111         
+112         # 初始化文件记忆管理，传入log_manager
+113         self.file_memory = FileMemory(
+114             config=FileMemoryConfig(
+115                 git_manager=self.git_manager,
+116                 ai_config=self.core_ai_config,
+117                 project_dir=self.project_dir,
+118                 log_manager=self.log_manager
+119             )
+120         )
+121         self.version_manager = VersionManager(
+122             issue_id=config.issue_id,
+123             ai_config=self.core_ai_config,
+124             log_manager=self.log_manager,
+125             git_manager=self.git_manager,
+126             file_memory=self.file_memory
+127         )
+128         self.file_selector = FileSelector(
+129             self.project_dir,
+130             self.config.issue_id,
+131             ai_config=self.core_ai_config
+132         )
+133 
+134         # 初始化代码工程师
+135         self.code_engineer_config = CodeEngineerConfig(
+136             project_dir=self.project_dir,
+137             ai_config=self.core_ai_config
+138         )
+139         self.engineer = CodeEngineer(
+140             self.code_engineer_config,
+141             self.log_manager,
+142             Diff(self.data_ai_config)
+143         )
+144         
+145         # 初始化聊天处理器
+146         self.chat_processor = ChatProcessor(
+147             ai_config=self.core_ai_config,
+148             log_manager=self.log_manager,
+149             config=ChatProcessorConfig(system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。")
+150         )
+151         
+152         # 初始化决策环境
+153         self.decision_env = DecisionProcess(
+154             ai_config=self.core_ai_config,
+155             version_manager=self.version_manager
+156         )
+157     
+158     def process_requirement(self, user_requirement: str) -> Optional[str]:
+159         """
+160         处理用户需求
+161         
+162         Args:
+163             user_requirement: 用户需求
+164 
+165         Returns:
+166             str: 处理结果的响应文本
+167         """
+168         try:
+169             # 初始化环境
+170             self._setup_environment()
+171             
+172             response = self._process_requirement_internal(user_requirement)
+173             
+174             # 如果是bot模式，在结束时清理临时目录
+175             if self.config.mode == "bot":
+176                 self._cleanup_environment()
+177             
+178             return response
+179         except Exception as e:
+180             logger.error(f"处理需求时发生错误: {str(e)}")
+181             raise
+182 
+183     def _setup_environment(self) -> None:
+184         """
+185         根据模式设置工作环境
+186         """
+187         if self.config.mode == "bot":
+188             try:
+189                 # 重置到issue对应的分支
+190                 self.git_manager.reset_to_issue_branch(self.config.issue_id)
+191                 logger.info(f"成功初始化Bot模式环境，工作目录: {self.temp_dir}")
+192             except Exception as e:
+193                 logger.error(f"初始化Bot模式环境失败: {str(e)}")
+194                 self._cleanup_environment()
+195                 raise
+196         current_round = self.log_manager.get_current_round()
+197 
+198         # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+199         if self.file_memory and current_round > 1:
+200             self.file_memory.update_file_details()
+201             logger.info("已更新文件详细信息")
+202         
+203     def _cleanup_environment(self) -> None:
+204         """
+205         清理工作环境，删除临时目录
+206         """
+207         if self.config.mode == "bot" and self.temp_dir and os.path.exists(self.temp_dir):
+208             try:
+209                 # 关闭git仓库连接
+210                 if hasattr(self, 'git_manager') and self.git_manager:
+211                     self.git_manager.delete_local_repository()
+212                 
+213                 # 删除临时目录
+214                 shutil.rmtree(self.temp_dir, ignore_errors=True)
+215                 logger.info(f"已清理临时工作目录: {self.temp_dir}")
+216             except Exception as e:
+217                 logger.warning(f"清理临时目录时出错: {str(e)}")
+218                 # 即使清理失败也不抛出异常，让主流程继续
+219 
+220     def _process_requirement_internal(self, user_requirement: str) -> Optional[str]:
+221         """
+222         内部处理需求的方法
+223         
+224         Args:
+225             user_requirement: 用户需求
+226             
+227         Returns:
+228             str: 处理结果
+229         """
+230         # 先通过决策环境分析需求类型
+231         decision_result = self.decision_env.analyze_requirement(user_requirement)
+232         
+233         logger.info(f"决策结果: 是否需要修改代码={decision_result.needs_code_modification}, "
+234                     f"理由={decision_result.reasoning}")
+235         
+236         if decision_result.needs_code_modification:
+237             # 执行代码修改流程
+238             response = self._run_code_generation_workflow(user_requirement)
+239         else: 
+240             # 执行对话流程
+241             response = self._run_chat_workflow(user_requirement)
+242         
+243         # 如果是Bot模式且有GitHub配置，自动回复到issue
+244         if self.config.mode == "bot":
+245             try:
+246                 self.version_manager.finalize_changes(mode=self.config.mode, comment_text=response)
+247                 logger.info(f"更改已经推送到远端，并添加了Issue评论")
+248             except Exception as e:
+249                 logger.error(f"添加Issue评论时出错: {str(e)}")
+250                 
+251         return response
+252     
+253     def _run_code_generation_workflow(self, user_requirement: str) -> Optional[str]:
+254         """
+255         执行代码生成流程，基于example_code_generate.py的逻辑
+256         
+257         Args:
+258             user_requirement: 用户需求
+259             
+260         Returns:
+261             str: 处理结果
+262         """
+263         logger.info("开始执行代码生成流程")
+264 
+265         # 确定当前版本
+266         requirement, history = self.version_manager.ensure_version_and_generate_context(user_requirement)
+267 
+268         # 生成提示词
+269         user_prompt = self._get_user_prompt(requirement, history)
+270 
+271         # 根据提示词修改代码
+272         success, response = self.engineer.process_prompt(prompt=user_prompt)
+273 
+274         # 提交更改
+275         if success:
+276             return response
+277         else:
+278             self.CODE_TIMES += 1
+279             if self.CODE_TIMES >= self.config.max_retry:
+280                 logger.error("code workflow超过最大重试次数")
+281                 return self._run_chat_workflow(user_requirement)
+282             else:
+283                 return self._run_code_generation_workflow(user_requirement)
+284     
+285     def _run_chat_workflow(self, user_requirement: str) -> Optional[str]:
+286         """
+287         执行聊天流程，基于example_chat_process.py的逻辑
+288         
+289         Args:
+290             user_requirement: 用户需求
+291             
+292         Returns:
+293             str: 处理结果
+294         """
+295         logger.info("开始执行聊天回复流程")
+296 
+297         history = self.version_manager.get_formatted_history()
+298 
+299         # 生成提示词
+300         user_prompt = self._get_user_prompt(user_requirement, history)
+301         
+302         # 处理聊天请求
+303         response = self.chat_processor.process_chat(user_prompt)
+304 
+305         if(response):
+306             return response
+307         else:
+308             self.CHAT_TIMES += 1
+309             if self.CHAT_TIMES >= self.config.max_retry:
+310                 logger.error("chat workflow超过最大重试次数")
+311                 return None
+312             else:
+313                 return self._run_chat_workflow(user_requirement)
+314 
+315     def _get_user_prompt(self, requirement: str, history: str) -> str:
+316         # 选择文件
+317         files = self.file_selector.select_files_for_requirement(requirement)
+318         descriptions = FileMemory.get_selected_file_descriptions(self.project_dir, files)
+319 
+320         # 准备提示词数据
+321         data = PromptData(
+322             requirement=requirement,
+323             project_dir=self.project_dir,
+324             steps=history,
+325             files=files,
+326             file_desc=descriptions
+327         )
+328 
+329         # 生成提示词
+330         return PromptGenerator.generatePrompt(data)
+331
+```
+
+
+
+
+```
+File: core/file_memory.py
+1 import json
+2 import os
+3 import time
+4 import datetime
+5 from dataclasses import dataclass
+6 from typing import Dict, List, Optional, Set, Union
+7 
+8 from dotenv import load_dotenv
+9 from langchain.tools import Tool
+10 
+11 from core.ai import AIAssistant, AIConfig
+12 from core.file_fetcher import FileFetcher
+13 from core.git_manager import GitManager, GitConfig
+14 from core.log_manager import LogManager
+15 from core.log_config import get_logger
+16 
+17 logger = get_logger(__name__)
+18 
+19 @dataclass
+20 class FileMemoryConfig:
+21     """配置文件记忆管理"""
+22     project_dir: str
+23     git_manager: GitManager
+24     ai_config: AIConfig
+25     # 可选的LogManager，用于获取上一轮修改信息
+26     log_manager: Optional[LogManager] = None
+27 
+28 
+29 class FileDetail:
+30     """文件详细信息类"""
+31     pass
+32 
+33 
+34 class FileMemory:
+35     """管理文件描述的记忆"""
+36 
+37     MEMORY_DIR = ".eng/memory"
+38     FILE_DETAILS_PATH = f"{MEMORY_DIR}/file_details.txt"
+39     GIT_ID_FILE = f"{MEMORY_DIR}/git_id"
+40     MAX_RETRIES = 3    # 最大重试次数
+41     RETRY_DELAY = 30    # 重试延迟（秒）
+42     # 每批次最大行数和字符数限制
+43     MAX_LINES_PER_BATCH = 10000  # 最大行数
+44     MAX_CHARS_PER_BATCH = 50000  # 最大字符数，约为 100KB
+45     MAX_FILES_PER_BATCH = 20  # 每批次最多处理的文件数
+46 
+47     def __init__(self, config: FileMemoryConfig):
+48         self.config = config
+49         self.memory_path = os.path.join(config.project_dir, self.FILE_DETAILS_PATH)
+50         self.git_id_path = os.path.join(config.project_dir, self.GIT_ID_FILE)
+51 
+52         # 保存LogManager引用
+53         self.log_manager = config.log_manager
+54 
+55         # 初始化 AI 助手
+56         self.ai_assistant = AIAssistant(config=self.config.ai_config, tools=[self._create_batch_description_tool()])
+57 
+58         # 初始化 Git 管理器
+59         self.git_manager = self.config.git_manager
+60 
+61         # 确保内存目录存在
+62         os.makedirs(os.path.dirname(self.memory_path), exist_ok=True)
+63 
+64     def _ensure_directories(self):
+65         """确保必要的目录存在"""
+66         memory_dir = os.path.join(self.config.project_dir, self.MEMORY_DIR)
+67         os.makedirs(memory_dir, exist_ok=True)
+68 
+69     def _get_failed_files_path(self) -> str:
+70         """获取失败文件记录的路径"""
+71         return os.path.join(self.config.project_dir, self.MEMORY_DIR, "failed_files.json")
+72 
+73     def _read_failed_files(self) -> List[str]:
+74         """读取处理失败的文件列表"""
+75         failed_files_path = self._get_failed_files_path()
+76         if os.path.exists(failed_files_path):
+77             try:
+78                 with open(failed_files_path, 'r', encoding='utf-8') as f:
+79                     return json.load(f)
+80             except Exception as e:
+81                 logger.error(f"读取失败文件列表出错: {str(e)}")
+82         return []
+83 
+84     def _write_failed_files(self, failed_files: List[str]) -> None:
+85         """写入处理失败的文件列表"""
+86         failed_files_path = self._get_failed_files_path()
+87         try:
+88             with open(failed_files_path, 'w', encoding='utf-8') as f:
+89                 json.dump(failed_files, f, ensure_ascii=False, indent=2)
+90         except Exception as e:
+91             logger.error(f"写入失败文件列表出错: {str(e)}")
+92 
+93     def _create_batch_description_tool(self) -> Tool:
+94         """创建批量生成文件描述的工具"""
+95         from langchain.tools import Tool
+96         
+97         def process_file_descriptions(file_descriptions: str) -> Dict[str, str]:
+98             """
+99             处理文件描述列表
+100             
+101             Args:
+102                 file_descriptions: JSON格式的文件描述列表，格式为 [{"fileName": "path/to/file.py", "desc": "文件描述"}]
+103                 
+104             Returns:
+105                 Dict[str, str]: 文件路径到描述的映射
+106             """
+107             try:
+108                 descriptions = {}
+109                 file_list = json.loads(file_descriptions)
+110                 
+111                 if not isinstance(file_list, list):
+112                     logger.error("错误：输入必须是一个列表")
+113                     return descriptions
+114                 
+115                 # 处理结果
+116                 for item in file_list:
+117                     if isinstance(item, dict) and "fileName" in item and "desc" in item:
+118                         descriptions[item["fileName"]] = item["desc"]
+119                     else:
+120                         logger.warning(f"跳过无效的文件描述项: {item}")
+121                 
+122                 logger.info(f"成功处理了 {len(descriptions)} 个文件描述")
+123                 return descriptions
+124             except json.JSONDecodeError:
+125                 logger.error("错误：输入不是有效的 JSON 格式")
+126                 return {}
+127             except Exception as e:
+128                 logger.error(f"处理文件描述时出错: {str(e)}")
+129                 return {}
+130         
+131         return Tool(
+132             name="process_file_descriptions",
+133             description="处理文件描述列表，输入必须是JSON格式的列表，每个元素包含fileName和desc字段",
+134             func=process_file_descriptions,
+135             return_direct=True
+136         )
+137 
+138     def _generate_batch_file_descriptions(self, files_with_content: List[Dict[str, str]]) -> Dict[str, str]:
+139         """
+140         批量生成文件描述
+141         
+142         Args:
+143             files_with_content: 包含文件路径和内容的列表，格式为 [{"filepath": "path/to/file.py", "content": "..."}]
+144             
+145         Returns:
+146             Dict[str, str]: 文件路径到描述的映射
+147         """
+148         # 构建提示词
+149         files_text = ""
+150         for i, file_info in enumerate(files_with_content):
+151             files_text += f"\n--- 文件 {i+1}: {file_info['filepath']} ---\n{file_info['content']}\n"
+152         
+153         prompt = f"""
+154 请分析以下多个代码文件，并为每个文件生成一个简短的中文描述（每个不超过100字）。
+155 描述应该包含：
+156 1. 文件的主要功能
+157 2. 包含的关键类或函数
+158 3. 与其他文件的主要交互（如果明显的话）
+159 
+160 {files_text}
+161 
+162 请使用process_file_descriptions工具返回结果，输入必须是一个JSON格式的列表，每个元素包含fileName和desc字段。
+163 例如：
+164 [
+165   {{"fileName": "path/to/file1.py", "desc": "这个文件实现了..."}},
+166   {{"fileName": "path/to/file2.py", "desc": "这个文件定义了..."}}
+167 ]
+168 
+169 请确保每个文件都有对应的描述，并且描述准确反映文件的功能和内容。
+170 """
+171         
+172         # 尝试生成描述，最多重试MAX_RETRIES次
+173         descriptions = {}
+174         failed_files = []
+175         file_paths = [file_info["filepath"] for file_info in files_with_content]
+176         
+177         for attempt in range(self.MAX_RETRIES):
+178             try:
+179                 logger.info(f"尝试批量生成文件描述（第{attempt+1}次尝试）")
+180                 
+181                 # 使用工具生成描述
+182                 descriptions = self.ai_assistant.generate_response(prompt, use_tools=True)
+183                 
+184                 # 如果返回的不是字典，可能是字符串响应
+185                 if not isinstance(descriptions, dict):
+186                     logger.error(f"工具返回了非预期的结果类型: {type(descriptions)}")
+187                     descriptions = {}
+188                 
+189                 # 检查是否所有文件都有描述
+190                 missing_files = [
+191                     file_path for file_path in file_paths
+192                     if file_path not in descriptions
+193                 ]
+194                 
+195                 if missing_files:
+196                     failed_files.extend(missing_files)
+197                     logger.warning(f"以下文件未能生成描述: {missing_files}")
+198                 
+199                 # 如果有成功处理的文件，则返回结果
+200                 if descriptions:
+201                     return descriptions
+202             
+203             except Exception as e:
+204                 logger.error(f"批量生成文件描述失败（第{attempt+1}次尝试）: {str(e)}")
+205             
+206             # 如果不是最后一次尝试，则等待后重试
+207             if attempt < self.MAX_RETRIES - 1:
+208                 logger.info(f"等待 {self.RETRY_DELAY} 秒后重试...")
+209                 time.sleep(self.RETRY_DELAY)
+210         
+211         # 所有尝试都失败，记录失败的文件
+212         self._update_failed_files(file_paths)
+213         
+214         # 返回空结果
+215         return descriptions
+216 
+217     def _update_failed_files(self, new_failed_files: List[str]) -> None:
+218         """更新失败文件列表"""
+219         if not new_failed_files:
+220             return
+221             
+222         # 读取现有失败文件列表
+223         existing_failed_files = self._read_failed_files()
+224         
+225         # 合并并去重
+226         all_failed_files = list(set(existing_failed_files + new_failed_files))
+227         
+228         # 写入更新后的列表
+229         self._write_failed_files(all_failed_files)
+230         logger.info(f"更新了失败文件列表，共 {len(all_failed_files)} 个文件")
+231 
+232     def process_failed_files(self) -> Dict[str, str]:
+233         """处理之前失败的文件"""
+234         failed_files = self._read_failed_files()
+235         if not failed_files:
+236             logger.info("没有需要处理的失败文件")
+237             return {}
+238             
+239         logger.info(f"开始处理 {len(failed_files)} 个失败文件")
+240         
+241         # 准备文件内容
+242         files_with_content = []
+243         for filepath in failed_files:
+244             content = self._get_file_content(filepath)
+245             if content.strip():  # 跳过空文件
+246                 files_with_content.append({"filepath": filepath, "content": content})
+247         
+248         # 按批次处理文件
+249         descriptions = self._process_files_in_batches(files_with_content)
+250         
+251         # 更新失败文件列表
+252         if descriptions:
+253             # 找出成功处理的文件
+254             processed_files = list(descriptions.keys())
+255             # 更新失败文件列表
+256             new_failed_files = [f for f in failed_files if f not in processed_files]
+257             self._write_failed_files(new_failed_files)
+258             
+259             logger.info(f"成功处理了 {len(processed_files)} 个之前失败的文件，还有 {len(new_failed_files)} 个文件失败, 如果存在要忽略的文件，请在项目根目录下配置 .eng/.engignore 配置方式同.gitignore")
+260         
+261         return descriptions
+262 
+263 
+264     def _get_file_content(self, filepath: str) -> str:
+265         """获取文件内容"""
+266         try:
+267             full_path = os.path.join(self.config.project_dir, filepath)
+268             with open(full_path, "r", encoding="utf-8") as f:
+269                 return f.read()
+270         except Exception as e:
+271             logger.error(f"读取文件 {filepath} 失败: {str(e)}, 如果要忽略该文件，请在项目根目录下配置 .eng/.engignore 配置方式同.gitignore")
+272             return ""
+273 
+274     def _process_files_in_batches(self, files_with_content: List[Dict[str, str]]) -> Dict[str, str]:
+275         """将文件分批处理"""
+276         all_descriptions = {}
+277         current_batch = []
+278         current_lines = 0
+279         current_size = 0
+280 
+281         
+282         for file_info in files_with_content:
+283             content = file_info["content"]
+284             lines = len(content.splitlines())
+285             chars = len(content)
+286             
+287             if lines == 0:
+288                 continue
+289                 
+290             # 检查是否需要开始新批次
+291             # 如果当前批次已满或添加此文件会超出限制，则处理当前批次并开始新批次
+292             if (current_batch and (
+293                 len(current_batch) >= self.MAX_FILES_PER_BATCH or
+294                 current_lines + lines > self.MAX_LINES_PER_BATCH or
+295                 current_size + chars > self.MAX_CHARS_PER_BATCH
+296             )):
+297                 # 处理当前批次
+298                 logger.info(f"处理批次: {len(current_batch)} 个文件，共 {current_lines} 行，{current_size} 字符")
+299                 batch_descriptions = self._generate_batch_file_descriptions(current_batch)
+300                 all_descriptions.update(batch_descriptions)
+301                 
+302                 # 重置批次
+303                 current_batch = [file_info]
+304                 current_lines = lines
+305                 current_size = chars
+306             else:
+307                 current_batch.append(file_info)
+308                 current_lines += lines
+309                 current_size += chars
+310         
+311         # 处理最后一个批次
+312         if current_batch:
+313             logger.info(f"处理最后一个批次: {len(current_batch)} 个文件，共 {current_lines} 行，{current_size} 字符")
+314             batch_descriptions = self._generate_batch_file_descriptions(current_batch)
+315             all_descriptions.update(batch_descriptions)
+316         
+317         return all_descriptions
+318 
+319     def _process_files_chunk(self, files: List[str]) -> Dict[str, str]:
+320         """处理一组文件，生成描述"""
+321         # 准备文件内容
+322         files_with_content = []
+323         for filepath in files:
+324             content = self._get_file_content(filepath)
+325             if content.strip():  # 跳过空文件
+326                 files_with_content.append({"filepath": filepath, "content": content})
+327         
+328         # 按批次处理文件
+329         return self._process_files_in_batches(files_with_content)
+330 
+331     def _read_git_id(self) -> str:
+332         """读取保存的 Git ID"""
+333         if not os.path.exists(self.git_id_path):
+334             return ""
+335         with open(self.git_id_path, "r") as f:
+336             return f.read().strip()
+337 
+338     def _write_git_id(self, git_id: str) -> None:
+339         """写入当前 Git ID"""
+340         with open(self.git_id_path, "w") as f:
+341             f.write(git_id)
+342 
+343     def _read_file_details(self) -> Dict[str, str]:
+344         """读取文件描述信息"""
+345         if not os.path.exists(self.memory_path):
+346             return {}
+347 
+348         details = {}
+349         with open(self.memory_path, "r", encoding="utf-8") as f:
+350             for line in f:
+351                 if ":" in line:
+352                     filename, description = line.strip().split(":", 1)
+353                     details[filename] = description
+354         return details
+355 
+356     def _write_file_details(self, details: Dict[str, str]) -> None:
+357         """写入文件描述信息"""
+358         with open(self.memory_path, "w", encoding="utf-8") as f:
+359             for filename, description in sorted(details.items()):
+360                 f.write(f"{filename}:{description}\n")
+361 
+362     def update_file_details(self) -> None:
+363         """更新文件描述信息"""
+364         # 获取所有文件
+365         all_files = set(FileFetcher.get_all_files_without_ignore(self.config.project_dir))
+366         
+367         # 读取现有描述
+368         existing_details = self._read_file_details()
+369         
+370         files_to_process = []
+371         
+372         # 如果有LogManager，使用它获取上一轮修改的文件
+373         if self.log_manager:
+374             # 获取上一轮修改的文件
+375             log_modified_files = self._get_last_round_modified_files()
+376             
+377             # 只处理LogManager中标记为修改的文件
+378             files_to_process = list(log_modified_files & all_files)
+379             
+380             # 删除不存在的文件的描述
+381             existing_details = {
+382                 k: v for k, v in existing_details.items() if k in all_files
+383             }
+384             
+385             logger.info(f"使用LogManager方式更新文件描述，处理{len(files_to_process)}个修改的文件")
+386         else:
+387             # 如果没有LogManager，回退到Git方式
+388             current_git_id = self.git_manager.get_current_commit_id()
+389             saved_git_id = self._read_git_id()
+390             files_to_process = self._get_changed_files_git(all_files, existing_details, current_git_id, saved_git_id)
+391             logger.info(f"使用Git方式更新文件描述，处理{len(files_to_process)}个文件")
+392 
+393         # 处理需要更新的文件
+394         if files_to_process:
+395             new_descriptions = self._process_files_chunk(files_to_process)
+396             existing_details.update(new_descriptions)
+397 
+398         # 保存结果
+399         self._write_file_details(existing_details)
+400         if not self.log_manager:
+401             # 只有使用Git方式时才更新Git ID
+402             current_git_id = self.git_manager.get_current_commit_id()
+403             self._write_git_id(current_git_id)
+404 
+405     def _get_last_round_modified_files(self) -> set:
+406         """
+407         从LogManager获取上一轮修改的文件列表
+408         
+409         Returns:
+410             set: 上一轮修改的文件路径集合
+411         """
+412         if not self.log_manager:
+413             logger.info("未提供LogManager，无法获取上一轮修改的文件")
+414             return set()
+415         
+416         try:
+417             # 获取当前轮次
+418             current_round = self.log_manager.get_current_round()
+419             
+420             # 获取上一轮的日志条目
+421             if current_round > 1:
+422                 prev_round = current_round - 1
+423                 log_entry = self.log_manager.get_issue_round_log_entry(prev_round, include_diff=True)
+424                 
+425                 if log_entry and log_entry.modified_files:
+426                     # 从diff_info中提取文件路径
+427                     modified_files = set()
+428                     for diff_info in log_entry.modified_files:
+429                         if diff_info.file_name and diff_info.is_create:
+430                             modified_files.add(diff_info.file_name)
+431                     
+432                     logger.info(f"从LogManager获取到上一轮({prev_round})修改的文件: {len(modified_files)}个")
+433                     return modified_files
+434             return set()
+435         except Exception as e:
+436             logger.error(f"获取上一轮修改的文件失败: {str(e)}")
+437             return set()
+438 
+439     def _get_changed_files_git(self, all_files: Set[str], existing_details: Dict[str, str], 
+440                              current_git_id: str, saved_git_id: Optional[str]) -> List[str]:
+441         """使用Git方式获取需要处理的文件列表"""
+442         if saved_git_id:
+443             # 获取自上次运行以来修改的文件
+444             changed_files = set(
+445                 self.git_manager.get_changed_files(saved_git_id, current_git_id)
+446             ) & all_files
+447             
+448             logger.info(f"从Git获取到变更文件: {len(changed_files)}个")
+449             
+450             new_files = all_files - set(existing_details.keys())
+451             logger.info(f"检测到新文件: {len(new_files)}个")
+452             
+453             return list(changed_files | new_files)
+454         else:
+455             # 首次运行，处理所有文件
+456             return list(all_files)
+457 
+458     @classmethod
+459     def get_file_descriptions(cls, project_dir: str) -> Dict[str, str]:
+460         """获取文件描述的静态方法"""
+461         memory_path = os.path.join(project_dir, cls.FILE_DETAILS_PATH)
+462 
+463         if not os.path.exists(memory_path):
+464             return {}
+465 
+466         try:
+467             descriptions = {}
+468             with open(memory_path, "r", encoding="utf-8") as f:
+469                 for line in f:
+470                     if ":" in line:
+471                         filename, description = line.strip().split(":", 1)
+472                         descriptions[filename] = description
+473             return descriptions
+474         except Exception as e:
+475             logger.error(f"读取文件描述失败: {str(e)}")
+476             return {}
+477 
+478     @classmethod
+479     def get_selected_file_descriptions(cls, project_dir: str, files: List[str]) -> Dict[str, str]:
+480         """获取文件描述的静态方法"""
+481         memory_path = os.path.join(project_dir, cls.FILE_DETAILS_PATH)
+482 
+483         if not os.path.exists(memory_path):
+484             return {}
+485         try:
+486             descriptions = {}
+487             with open(memory_path, "r", encoding="utf-8") as f:
+488                 for line in f:
+489                     if ":" in line:
+490                         filename, description = line.strip().split(":", 1)
+491                         if filename in files:
+492                             descriptions[filename] = description
+493             return descriptions
+494         except Exception as e:
+495             logger.error(f"读取文件描述失败: {str(e)}")
+496             return {}
+497 
+498 if __name__ == "__main__":
+499     load_dotenv()
+500     project_dir = "../."
+501     memory = FileMemory(
+502         FileMemoryConfig(
+503             ai_config=AIConfig(temperature=1, model_name="claude-3.7-sonnet"),
+504             git_manager=GitManager(config=GitConfig(repo_path=project_dir)),
+505             log_manager=None
+506         )
+507     )
+508 
+509     memory.update_file_details()
+510
+```
+
+
+
+
+# 历史执行信息
+
+【round_1】
+requirement: 
+为了与GitHub更好地集成，提供一个客户端，为项目文件生成GitHub CICD，分为两个cicd。
+    一个是执行memory初始化的，配置为某一个分支push，分支默认为main，提供参数可以修改。
+    一个时执行workflowEngine的，配置为提issues和用户issues下回复comment时触发，将issues_id传入，所有环境变量都配置在github cicd的环境变量中带入。
+    提issues的时候，用户需求就是提的issues内容。提comment时，需求内容开头为 bella-issues-bot已处理：则代表是bella-issues-bot追加的不需要触发。
+    
+这是一个客户端工具，供其他项目安装和使用，通过pip install bella-issues-bot安装，用来为其他项目自动生成GitHub工作流配置文件。
+
+注意：在bot模式下，workflowEngineer应该创建临时目录来处理，所以执行的时候不需要project_dir参数。
+agent_response: 
+I'll create a client tool that can generate GitHub CICD workflows for projects using bella-issues-bot. The tool will generate two workflows:
+
+1. A workflow for initializing memory - triggered when a specified branch is pushed
+2. A workflow for executing WorkflowEngine - triggered by issue creation or comments on issues
+
+Let's start by designing the necessary components and implementing them.
+
+## Planning
+
+1. Create a new module for generating GitHub workflow files
+2. Implement CLI interface for the generator
+3. Create templates for the GitHub workflow YAML files
+4. Implement the logic to customize and write the workflow files
+5. Update package configuration to include the new commands
+
+Let's start implementing:
+
+```diff
+--- /dev/null
++++ client/github_workflow_generator.py
+@@ -0,0 +1,242 @@
++"""
++GitHub Workflow Generator
++
++A module for generating GitHub Actions workflow files to integrate bella-issues-bot with GitHub.
++Creates two workflows:
++1. File Memory Initialization - Triggered on push to a configurable branch
++2. Issue Processing Bot - Triggered when issues are created or commented on
++"""
++
++import argparse
++import os
++import sys
++from pathlib import Path
++from typing import Dict, Optional
++
++from core.log_config import get_logger, setup_logging
++
++logger = get_logger(__name__)
++
++# Template for memory initialization workflow
++MEMORY_INIT_TEMPLATE = """name: Initialize File Memory
++
++on:
++  push:
++    branches:
++      - {branch}
++
++jobs:
++  init-memory:
++    runs-on: ubuntu-latest
++    permissions:
++      contents: write
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v3
++        with:
++          fetch-depth: 0
++
++      - name: Set up Python
++        uses: actions/setup-python@v4
++        with:
++          python-version: '3.10'
++
++      - name: Install bella-issues-bot
++        run: |
++          python -m pip install --upgrade pip
++          pip install bella-issues-bot{package_version}
++
++      - name: Initialize file memory
++        env:
++          OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
++          OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
++          GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
++          GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
++        run: |
++          bella-file-memory -d . -m {model} -t {temperature}
++
++      - name: Commit memory files if changed
++        run: |
++          git config --local user.email "action@github.com"
++          git config --local user.name "GitHub Action"
++          git add .eng/memory/
++          git diff --staged --quiet || git commit -m "Update file memory"
++          git push
++"""
++
++# Template for issue processing workflow
++ISSUE_PROCESS_TEMPLATE = """name: Process Issues with bella-issues-bot
++
++on:
++  issues:
++    types: [opened]
++  issue_comment:
++    types: [created]
++
++jobs:
++  process-issue:
++    runs-on: ubuntu-latest
++    permissions:
++      contents: write
++      issues: write
++    if: ${{{{ !startsWith(github.event.comment.body, 'bella-issues-bot已处理：') }}}}
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v3
++        with:
++          fetch-depth: 0
++
++      - name: Set up Python
++        uses: actions/setup-python@v4
++        with:
++          python-version: '3.10'
++
++      - name: Install bella-issues-bot
++        run: |
++          python -m pip install --upgrade pip
++          pip install bella-issues-bot{package_version}
++
++      - name: Extract issue info
++        id: issue
++        run: |
++          if [[ "${{{{ github.event_name }}}}" == "issues" ]]; then
++            echo "issue_id=${{{{ github.event.issue.number }}}}" >> $GITHUB_OUTPUT
++            echo "requirement<<EOF" >> $GITHUB_OUTPUT
++            echo "${{{{ github.event.issue.body }}}}" >> $GITHUB_OUTPUT
++            echo "EOF" >> $GITHUB_OUTPUT
++          else
++            echo "issue_id=${{{{ github.event.issue.number }}}}" >> $GITHUB_OUTPUT
++            echo "requirement<<EOF" >> $GITHUB_OUTPUT
++            echo "${{{{ github.event.comment.body }}}}" >> $GITHUB_OUTPUT
++            echo "EOF" >> $GITHUB_OUTPUT
++          fi
++
++      - name: Process issue with bella-issues-bot
++        env:
++          OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
++          OPENAI_API_BASE: ${{{{ secrets.OPENAI_API_BASE }}}}
++          GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
++          GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
++        run: |
++          # Create a new branch for this issue
++          git checkout -b bella-issues-bot-${{{{ steps.issue.outputs.issue_id }}}}
++
++          # Run bella-issues-bot in bot mode
++          bella-issues-bot --mode bot --issue-id ${{{{ steps.issue.outputs.issue_id }}}} --core-model {core_model} --data-model {data_model} --core-temperature {core_temperature} --data-temperature {data_temperature} --requirement "${{{{ steps.issue.outputs.requirement }}}}"
++
++          # Push changes to the new branch
++          git push -u origin bella-issues-bot-${{{{ steps.issue.outputs.issue_id }}}}
++          
++          # Create a pull request
++          PR_URL=$(gh pr create --title "Fix for issue #${{{{ steps.issue.outputs.issue_id }}}}" --body "Automated PR by bella-issues-bot to address issue #${{{{ steps.issue.outputs.issue_id }}}}" --base {base_branch})
++          echo "Created PR: $PR_URL"
++        env:
++          GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
++"""
++
++def generate_workflow_files(
++    output_dir: str,
++    memory_branch: str = "main",
++    base_branch: str = "main",
++    model: str = "gpt-4o",
++    core_model: Optional[str] = None,
++    data_model: Optional[str] = None,
++    temperature: float = 0.7,
++    core_temperature: Optional[float] = None,
++    data_temperature: Optional[float] = None,
++    package_version: str = ""
++) -> Dict[str, str]:
++    """
++    Generate GitHub workflow YAML files.
++    
++    Args:
++        output_dir: Directory to write workflow files
++        memory_branch: Branch that triggers memory initialization
++        base_branch: Base branch for pull requests
++        model: Default model to use for all operations
++        core_model: Model for core operations (if different from model)
++        data_model: Model for data operations (if different from model)
++        temperature: Default temperature setting for all models
++        core_temperature: Temperature for core model (if different)
++        data_temperature: Temperature for data model (if different)
++        package_version: Specific version of package to install (e.g. "==0.1.1")
++        
++    Returns:
++        Dictionary mapping file paths to their contents
++    """
++    workflows_dir = os.path.join(output_dir, ".github", "workflows")
++    os.makedirs(workflows_dir, exist_ok=True)
++    
++    # Format version specification if provided
++    if package_version and not package_version.startswith("=="):
++        package_version = f"=={package_version}"
++    
++    # Use provided models or default to the general model
++    actual_core_model = core_model or model
++    actual_data_model = data_model or model
++    
++    # Use provided temperatures or default to the general temperature
++    actual_core_temp = core_temperature if core_temperature is not None else temperature
++    actual_data_temp = data_temperature if data_temperature is not None else temperature
++    
++    # Generate memory initialization workflow
++    memory_workflow_path = os.path.join(workflows_dir, "memory_init.yml")
++    memory_workflow_content = MEMORY_INIT_TEMPLATE.format(
++        branch=memory_branch,
++        model=model,
++        temperature=temperature,
++        package_version=package_version
++    )
++    
++    # Generate issue processing workflow
++    issue_workflow_path = os.path.join(workflows_dir, "issue_process.yml")
++    issue_workflow_content = ISSUE_PROCESS_TEMPLATE.format(
++        core_model=actual_core_model,
++        data_model=actual_data_model,
++        core_temperature=actual_core_temp,
++        data_temperature=actual_data_temp,
++        base_branch=base_branch,
++        package_version=package_version
++    )
++    
++    # Write the files
++    with open(memory_workflow_path, 'w') as f:
++        f.write(memory_workflow_content)
++    
++    with open(issue_workflow_path, 'w') as f:
++        f.write(issue_workflow_content)
++    
++    logger.info(f"Generated workflow files in {workflows_dir}")
++    
++    return {
++        memory_workflow_path: memory_workflow_content,
++        issue_workflow_path: issue_workflow_content
++    }
++
++def main() -> None:
++    """Command line interface for GitHub workflow generator."""
++    parser = argparse.ArgumentParser(description="Generate GitHub Actions workflows for bella-issues-bot integration")
++    parser.add_argument("--output", "-o", type=str, default=".", help="Output directory (default: current directory)")
++    parser.add_argument("--memory-branch", "-mb", type=str, default="main", help="Branch that triggers memory initialization (default: main)")
++    parser.add_argument("--base-branch", "-bb", type=str, default="main", help="Base branch for pull requests (default: main)")
++    parser.add_argument("--model", "-m", type=str, default="gpt-4o", help="Default model for all operations (default: gpt-4o)")
++    parser.add_argument("--core-model", "--cm", type=str, help="Model for core operations (defaults to --model)")
++    parser.add_argument("--data-model", "--dm", type=str, help="Model for data operations (defaults to --model)")
++    parser.add_argument("--temperature", "-t", type=float, default=0.7, help="Default temperature for all models (default: 0.7)")
++    parser.add_argument("--core-temperature", "--ct", type=float, help="Temperature for core model (defaults to --temperature)")
++    parser.add_argument("--data-temperature", "--dt", type=float, help="Temperature for data model (defaults to --temperature)")
++    parser.add_argument("--package-version", "-v", type=str, default="", help="Specific package version to install (e.g. '0.1.1')")
++    parser.add_argument("--log-level", "-l", type=str, choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="Logging level")
++    
++    args = parser.parse_args()
++    
++    # Setup logging
++    import logging
++    setup_logging(log_level=getattr(logging, args.log_level))
++    
++    # Generate workflow files
++    try:
++        generate_workflow_files(
++            output_dir=args.output,
++            memory_branch=args.memory_branch,
++            base_branch=args.base_branch,
++            model=args.model,
++            core_model=args.core_model,
++            data_model=args.data_model,
++            temperature=args.temperature,
++            core_temperature=args.core_temperature,
++            data_temperature=args.data_temperature,
++            package_version=args.package_version
++        )
++        logger.info("Successfully generated GitHub workflow files")
++    except Exception as e:
++        logger.error(f"Error generating workflow files: {str(e)}")
++        sys.exit(1)
++
++if __name__ == "__main__":
++    main()
+```
+
+Now let's create a CLI script for easier usage:
+
+```diff
+--- /dev/null
++++ scripts/generate_workflows.sh
+@@ -0,0 +1,29 @@
++#!/bin/bash
++
++# Script to generate GitHub workflow files for bella-issues-bot integration
++# This script provides a simple interface to the workflow generator
++
++show_help() {
++    echo "Usage: $0 [options]"
++    echo ""
++    echo "Options:"
++    echo "  -o, --output DIR        Output directory (default: current directory)"
++    echo "  -mb, --memory-branch    Branch that triggers memory initialization (default: main)"
++    echo "  -bb, --base-branch      Base branch for pull requests (default: main)"
++    echo "  -m, --model MODEL       Default model for all operations (default: gpt-4o)"
++    echo "  -t, --temp VALUE        Default temperature setting (default: 0.7)"
++    echo "  -v, --version VERSION   Specific package version to install (e.g. '0.1.1')"
++    echo "  -h, --help              Show this help message"
++    echo ""
++    echo "Additional options like --core-model, --data-model, etc. are also supported."
++    echo "Run 'bella-github-workflows --help' for complete details."
++    echo ""
++}
++
++if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
++    show_help
++    exit 0
++fi
++
++# Pass all arguments to the Python module
++python -m client.github_workflow_generator "$@"
+```
+
+Now let's update the package entry points to include our new command:
+
+```diff
+--- pyproject.toml
++++ pyproject.toml
+@@ -47,6 +47,7 @@ pyyaml = ">=6.0"
+ 
+ [tool.poetry.scripts]
+ bella-issues-bot = 'client.terminal:run_workflow_from_terminal'
+ bella-file-memory = 'client.file_memory_client:main'
++bella-github-workflows = 'client.github_workflow_generator:main'
+ 
+ [tool.ruff]
+```
+
+Let's also update the client package exports:
+
+```diff
+--- client/__init__.py
++++ client/__init__.py
+@@ -2,3 +2,4 @@
+ 
+ # Export file memory functions for programmatic use
+ from client.file_memory_client import initialize_file_memory, update_file_descriptions, process_failed_files
++from client.github_workflow_generator import generate_workflow_files
+```
+
+Let's update the README to include instructions for using our new tool:
+
+```diff
+--- README.md
++++ README.md
+@@ -98,8 +98,23 @@ for data_model in data_model if data_model is None
+ ## 示例
+ 
+ 可以在[examples](./examples/)目录下找到使用示例。
+ 
+ ### 文件记忆初始化
+ 
+ 在项目根目录执行 `bella-file-memory` 可以初始化文件记忆系统，它会自动分析项目中的文件并生成描述信息。
+ 更多详细信息请参阅[文件记忆客户端文档](./client/README_FILE_MEMORY.md)。
++
++### GitHub工作流集成
++
++bella-issues-bot 提供了一个工具，可以自动为您的项目生成 GitHub Actions 工作流配置：
++
++```bash
++bella-github-workflows [选项]
++```
++
++这将创建两个工作流文件：
++1. `memory_init.yml` - 当指定分支有推送时初始化文件记忆
++2. `issue_process.yml` - 当创建新 Issue 或添加评论时处理需求
++
++选项：
++- `--memory-branch`, `-mb` - 触发记忆初始化的分支（默认：main）
++- `--base-branch`, `-bb` - 拉取请求的目标分支（默认：main）
++- `--model`, `-m` - 默认模型（默认：gpt-4o）
++- `--temperature`, `-t` - 默认温度（默认：0.7）
+```
+
+Finally, let's create a client README file specific to GitHub workflows:
+
+```diff
+--- /dev/null
++++ client/README_GITHUB_WORKFLOWS.md
+@@ -0,0 +1,85 @@
++# GitHub工作流生成器
++
++bella-issues-bot 提供了自动生成 GitHub Actions 工作流配置的功能，可以轻松将 AI 助手集成到您的 GitHub 项目中。
++
++## 功能概述
++
++工作流生成器会创建两个GitHub Actions工作流文件：
++
++1. **记忆初始化工作流** (`memory_init.yml`)
++   - 当指定分支有推送时触发
++   - 自动分析项目文件并生成文件描述
++   - 将记忆文件提交回仓库
++
++2. **Issue处理工作流** (`issue_process.yml`)
++   - 在创建新Issue或添加评论时触发
++   - 自动提取Issue或评论中的需求
++   - 在专用分支上处理需求并实现代码
++   - 创建拉取请求，提供解决方案
++   - 在Issue中添加处理结果的评论
++
++## 命令行使用方式
++
++```bash
++bella-github-workflows [选项]
++```
++
++### 命令行选项
++
++| 选项 | 简写 | 描述 | 默认值 |
++|------|------|------|--------|
++| `--output` | `-o` | 输出目录 | 当前目录 |
++| `--memory-branch` | `-mb` | 触发记忆初始化的分支 | main |
++| `--base-branch` | `-bb` | 拉取请求的目标分支 | main |
++| `--model` | `-m` | 默认模型 | gpt-4o |
++| `--core-model` | `--cm` | 核心操作的模型 | 默认等于model |
++| `--data-model` | `--dm` | 数据操作的模型 | 默认等于model |
++| `--temperature` | `-t` | 默认温度设置 | 0.7 |
++| `--core-temperature` | `--ct` | 核心模型温度 | 默认等于temperature |
++| `--data-temperature` | `--dt` | 数据模型温度 | 默认等于temperature |
++| `--package-version` | `-v` | 指定安装的包版本 | 最新版本 |
++| `--log-level` | `-l` | 日志级别 | INFO |
++| `--help` | `-h` | 显示帮助信息 | - |
++
++### 简易脚本使用
++
++```bash
++./scripts/generate_workflows.sh [选项]
++```
++
++## 工作流详解
++
++### 记忆初始化工作流 (`memory_init.yml`)
++
++此工作流在指定分支有推送时运行，它：
++1. 检出代码库
++2. 设置Python环境
++3. 安装bella-issues-bot
++4. 初始化文件记忆系统，生成项目文件描述
++5. 将生成的记忆文件提交回仓库
++
++### Issue处理工作流 (`issue_process.yml`)
++
++此工作流在创建新Issue或添加评论时触发，它：
++1. 检出代码库
++2. 设置Python环境
++3. 安装bella-issues-bot
++4. 提取Issue信息和需求内容
++5. 创建专用分支处理需求
++6. 运行bella-issues-bot处理需求并生成代码
++7. 将更改推送到专用分支
++8. 创建拉取请求
++9. 在Issue中添加处理结果的评论
++
++## GitHub配置要求
++
++要使工作流正常运行，您需要在GitHub仓库的Secrets中配置以下环境变量：
++
++- `OPENAI_API_KEY`: OpenAI API密钥
++- `OPENAI_API_BASE`: (可选) 自定义OpenAI API基础URL
++
++此外，工作流需要以下权限：
++- `contents: write` - 允许读写仓库内容
++- `issues: write` - 允许在Issue中添加评论
++
++## 示例
++
++```bash
++# 使用默认设置生成工作流
++bella-github-workflows
++
++# 自定义模型和温度
++bella-github-workflows --model gpt-4-turbo --temperature 0.8
++
++# 为不同操作指定不同模型
++bella-github-workflows --core-model gpt-4o --data-model gpt-3.5-turbo
++
++# 指定工作流触发的分支
++bella-github-workflows --memory-branch develop --base-branch main
++```
+```
+
+Now let's update the main README to reference our new GitHub workflow documentation:
+
+```diff
+--- README.md
++++ README.md
+@@ -118,3 +118,5 @@ bella-github-workflows [选项]
+ - `--base-branch`, `-bb` - 拉取请求的目标分支（默认：main）
+ - `--model`, `-m` - 默认模型（默认：gpt-4o）
+ - `--temperature`, `-t` - 默认温度（默认：0.7）
++
++详细信息请参考[GitHub工作流文档](./client/README_GITHUB_WORKFLOWS.md).
+```
+
+This concludes a fully working implementation. Here's what I've created:
+
+1. A new module `client/github_workflow_generator.py` that can generate GitHub workflows for:
+   - Memory initialization triggered by branch pushes
+   - Issue processing triggered by new issues or comments
+
+2. A command-line interface `bella-github-workflows` to easily generate these workflow files
+
+3. A helper script `scripts/generate_workflows.sh` for even easier command-line usage
+
+4. Documentation in both the main README and a dedicated README_GITHUB_WORKFLOWS.md
+
+The generated workflows will:
+1. For memory initialization: Run on push to a configurable branch, initialize the file memory, and commit the results
+2. For issue processing: Run when issues are created or commented on, process the requirements using bella-issues-bot in bot mode, create a branch with the changes, create a PR, and comment on the issue with the results
+
+The implementation follows the same pattern as the existing client tools, uses proper configuration options, and has comprehensive documentation.
+
+
+
+# 用户需求
+
+为了与GitHub更好地集成，提供一个客户端，为项目文件生成GitHub CICD，分为两个cicd。
+    一个是执行memory初始化的，配置为某一个分支push，分支默认为main，提供参数可以修改。需要判断如果是机器人推送的不需要执行（通过检查commit信息）。
+    一个时执行workflowEngine的，配置为提issues和用户issues下回复comment时触发，将issues_id传入，所有环境变量都配置在github cicd的环境变量中带入。
+    提issues的时候，用户需求就是提的issues内容。提comment时，需要判断是不是用户提的，如果评论内容开头为"bella-issues-bot已处理："则代表是bella-issues-bot追加的不需要触发。
+    
+这是一个客户端工具，供其他项目安装和使用，通过pip install bella-issues-bot安装，用来为其他项目自动生成GitHub工作流配置文件。
+
+注意：bella-issues-bot和fileMemory都会使用gitManager自动提交代码，所以工作流中应去掉手动push的逻辑。

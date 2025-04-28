@@ -3,11 +3,13 @@ from typing import List, Optional, Set
 
 from dotenv import load_dotenv
 from langchain.tools import Tool
+from pydantic import Field, BaseModel
 
 from core.ai import AIAssistant, AIConfig
 from core.file_fetcher import FileFetcher
 from core.file_memory import FileMemory
-from log_config import get_logger
+from core.log_config import get_logger
+from langchain_core.tools import StructuredTool
 
 logger = get_logger(__name__)
 
@@ -34,45 +36,17 @@ class FileSelector:
             config=self.ai_config,
             tools=[self.select_files_tool]
         )
-    
-    def _create_select_files_tool(self) -> Tool:
+
+    class _RequirementAnalyzerSchema(BaseModel):
+        file_list: List[str] = Field(..., description="被选择的文件列表")
+
+    def _create_select_files_tool(self) -> StructuredTool:
         """创建选择文件的工具"""
-        def select_files(file_list: str) -> str:
-            """
-            选择指定的文件
-            
-            Args:
-                file_list: 文件列表，以逗号分隔
-            
-            Returns:
-                选择结果
-            """
-            logger.debug(f"===== select_files 工具被调用! 文件列表: {file_list} =====")  
-            try:
-                # 解析文件列表
-                files = [f.strip() for f in file_list.split(',')]
-
-                log_dir = os.path.join(
-                    self.project_dir, ".eng", "memory/issues", "#"+str(self.issues_id)
-                )
-                os.makedirs(log_dir, exist_ok=True)
-                log_path = os.path.join(log_dir, "file_selected.txt")
-                # 写日志
-                with open(log_path, "w", encoding="utf-8") as f:
-                    f.writelines("\n".join(files))
-
-                result = f"已成功选择以下文件:\n{', '.join(files)}"
-                logger.debug(f"===== select_files 工具执行结果: {result} =====")  
-                return file_list
-            except Exception as e:
-                error_msg = f"选择文件时出错: {str(e)}"
-                logger.error(f"===== select_files 工具执行错误: {error_msg} =====")  
-                return ""
-        
-        return Tool(
+        return StructuredTool.from_function(
             name="select_files",
-            description="选择实现功能所需的文件。输入应该是以逗号分隔的文件路径列表，相对于项目根目录。",
-            func=select_files,
+            description="选择实现功能所需的文件。输入文件相对路径列表进行选择，相对路径基于项目的根目录。",
+            func=lambda **kwargs: kwargs["file_list"],
+            args_schema=self._RequirementAnalyzerSchema,
             return_direct=True,
         )
     
@@ -98,7 +72,7 @@ class FileSelector:
             return self.ai_assistant.generate_response(
                 prompt, 
                 use_tools=True
-            ).split(",")
+            )
         except Exception as e:
             logger.error(f"select_files_for_requirement 工具执行异常: {str(e)}")
             return []
@@ -151,7 +125,7 @@ class FileSelector:
 
 ##请分析这个功能需求，并根据文件名和文件的描述，确定实现这个功能所需阅读的文件。
 你的回答应该只包含文件名列表，每个文件名应该与上面列表中的完全匹配。
-请使用 select_files 工具提交你的选择，文件名之间用逗号分隔。
+请使用 select_files 工具提交你的选择，工具需要的参数是一个list。
 
 ##原则：
 1、如果你认为该文件和需求的关联性大，有助于你理解如何实现功能那么你应该选择

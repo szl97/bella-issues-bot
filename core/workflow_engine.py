@@ -1,9 +1,10 @@
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass
-from typing import Optional, Tuple
 import uuid
+from dataclasses import dataclass
+from typing import Optional
+
 from core.ai import AIConfig
 from core.chat_processor import ChatProcessor, ChatProcessorConfig
 from core.code_engineer import CodeEngineer, CodeEngineerConfig
@@ -11,11 +12,11 @@ from core.decision import DecisionProcess
 from core.diff import Diff
 from core.file_memory import FileMemory, FileMemoryConfig
 from core.file_selector import FileSelector
-from core.git_manager import GitManager, GitConfig, get_issues_branch_name
+from core.git_manager import GitManager, GitConfig
+from core.log_config import get_logger
 from core.log_manager import LogManager, LogConfig
 from core.prompt_generator import PromptGenerator, PromptData
 from core.version_manager import VersionManager
-from log_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -72,6 +73,7 @@ class WorkflowEngine:
             # 客户端模式直接使用指定的目录
             self.config = config
             self.temp_dir = None
+            logger.info("当前为client模式")
 
         self.project_dir = os.path.abspath(self.config.project_dir)
         # 创建AI配置
@@ -92,39 +94,44 @@ class WorkflowEngine:
         # 创建Git配置
         self.git_config = GitConfig(
             repo_path=self.project_dir,
-            remote_url=config.github_remote_url,
-            auth_token=config.github_token,
+            remote_url=config.github_remote_url or os.getenv("GIT_REMOTE"),
+            auth_token=config.github_token or os.getenv("GITHUB_TOKEN"),
             default_branch=config.default_branch
         )
         
         # 创建日志配置
         self.log_config = LogConfig(
             project_dir=self.project_dir,
-            issue_id=config.issue_id
+            issue_id=config.issue_id,
+            mode=config.mode
         )
         
         # 初始化管理器
-        self.log_manager = LogManager(config=self.log_config)
         self.git_manager = GitManager(config=self.git_config)
+        self.log_manager = LogManager(config=self.log_config)
+        
+        # 初始化文件记忆管理，传入log_manager
+        self.file_memory = FileMemory(
+            config=FileMemoryConfig(
+                git_manager=self.git_manager,
+                ai_config=self.core_ai_config,
+                project_dir=self.project_dir,
+                log_manager=self.log_manager
+            )
+        )
         self.version_manager = VersionManager(
             issue_id=config.issue_id,
             ai_config=self.core_ai_config,
             log_manager=self.log_manager,
-            git_manager=self.git_manager
+            git_manager=self.git_manager,
+            file_memory=self.file_memory
         )
         self.file_selector = FileSelector(
             self.project_dir,
             self.config.issue_id,
             ai_config=self.core_ai_config
         )
-        self.file_memory = FileMemory(
-            config=FileMemoryConfig(
-                git_manager=self.git_manager,
-                ai_config=self.core_ai_config,
-                project_dir=self.project_dir
-            )
-        )
-        
+
         # 初始化代码工程师
         self.code_engineer_config = CodeEngineerConfig(
             project_dir=self.project_dir,
@@ -187,6 +194,12 @@ class WorkflowEngine:
                 logger.error(f"初始化Bot模式环境失败: {str(e)}")
                 self._cleanup_environment()
                 raise
+        current_round = self.log_manager.get_current_round()
+
+        # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+        if self.file_memory and current_round > 1:
+            self.file_memory.update_file_details()
+            logger.info("已更新文件详细信息")
         
     def _cleanup_environment(self) -> None:
         """
@@ -224,15 +237,15 @@ class WorkflowEngine:
         if decision_result.needs_code_modification:
             # 执行代码修改流程
             response = self._run_code_generation_workflow(user_requirement)
-        else:
+        else: 
             # 执行对话流程
             response = self._run_chat_workflow(user_requirement)
         
         # 如果是Bot模式且有GitHub配置，自动回复到issue
-        if self.config.mode == "bot" and self.config.github_remote_url and response:
+        if self.config.mode == "bot":
             try:
-                self.git_manager.add_issue_comment(issue_number=self.config.issue_id, comment_text=response)
-                logger.info(f"已在Issue #{self.config.issue_id}中添加回复")
+                self.version_manager.finalize_changes(mode=self.config.mode, comment_text=response)
+                logger.info(f"更改已经推送到远端，并添加了Issue评论")
             except Exception as e:
                 logger.error(f"添加Issue评论时出错: {str(e)}")
                 
@@ -253,25 +266,14 @@ class WorkflowEngine:
         # 确定当前版本
         requirement, history = self.version_manager.ensure_version_and_generate_context(user_requirement)
 
-        # 初始化工作区
-        branch_name = self._init_env()
-
         # 生成提示词
         user_prompt = self._get_user_prompt(requirement, history)
 
         # 根据提示词修改代码
         success, response = self.engineer.process_prompt(prompt=user_prompt)
-        
+
         # 提交更改
         if success:
-            self.git_manager.commit(f"issues#{self.config.issue_id}-generate by Bella-Issues-Bot")
-            
-            # 对于客户端和机器人模式，都尝试推送更改
-            if self.config.github_remote_url:
-                try:
-                    self.git_manager.push(branch=branch_name, force=True)
-                except Exception as e:
-                    logger.warning(f"推送代码更改失败: {str(e)}")
             return response
         else:
             self.CODE_TIMES += 1
@@ -293,10 +295,7 @@ class WorkflowEngine:
         """
         logger.info("开始执行聊天回复流程")
 
-
         history = self.version_manager.get_formatted_history()
-        # 初始化工作区
-        branch_name = self._init_env()
 
         # 生成提示词
         user_prompt = self._get_user_prompt(user_requirement, history)
@@ -305,14 +304,6 @@ class WorkflowEngine:
         response = self.chat_processor.process_chat(user_prompt)
 
         if(response):
-            self.git_manager.commit(f"issues#{self.config.issue_id}-generate by Bella-Issues-Bot")
-            
-            # 对于客户端和机器人模式，都尝试推送更改
-            if self.config.github_remote_url:
-                try:
-                    self.git_manager.push(branch=branch_name, force=True)
-                except Exception as e:
-                    logger.warning(f"推送代码更改失败: {str(e)}")
             return response
         else:
             self.CHAT_TIMES += 1
@@ -338,17 +329,3 @@ class WorkflowEngine:
 
         # 生成提示词
         return PromptGenerator.generatePrompt(data)
-
-    def _init_env(self) -> str:
-        # 获取当前轮次
-        current_round = self.log_manager.get_current_round()
-
-        # 获取分支名称
-        branch_name = get_issues_branch_name(self.config.issue_id, current_round)
-
-        # 如果轮次大于1，增量更新上一轮修改的文件详细信息
-        if current_round > 1:
-            self.file_memory.update_file_details()
-        # 切换到适当的分支
-        self.git_manager.switch_branch(branch_name, True)
-        return branch_name

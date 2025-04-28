@@ -1,6 +1,7 @@
 poetry.lock
 .eng/
 .git/
+.github/
 .gitignore
 *.ico
 *.png
@@ -15,3 +16,4 @@ poetry.lock
 *.mp4
 *.env
 *.lock
+*.example

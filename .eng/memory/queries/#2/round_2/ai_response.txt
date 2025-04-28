@@ -1,0 +1,242 @@
+作为项目助手，我将为您创建两个README文件，分别介绍项目启动和项目核心功能，并着重描述记忆管理部分。
+
+# README.md (项目主文档)
+
+```markdown
+# bella-issues-bot
+
+## 项目简介
+
+bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：
+
+1. **个人开发助手模式**：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。
+2. **GitHub自动化模式**：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。
+
+通过对项目结构的深入理解和强大的代码生成能力，bella-issues-bot 能够显著提高开发效率，减少重复工作，让您专注于更有创造性的任务。
+
+## 主要功能
+
+- **需求分析**：自动理解和分解用户的功能需求
+- **代码生成**：根据需求生成符合项目风格的代码
+- **版本管理**：与Git集成，支持分支创建和代码提交
+- **记忆系统**：记录项目文件描述和操作历史，提供上下文感知能力
+
+## 记忆与上下文管理
+
+bella-issues-bot 配备了强大的记忆系统，由三个核心组件构成：
+
+### 1. 日志管理 (LogManager)
+
+LogManager 负责记录每次交互的完整历史，包括：
+- 系统提示词和用户需求
+- AI响应内容
+- 文件修改记录和差异对比
+
+这些日志按issue和轮次组织，支持历史追溯和问题诊断。每轮交互都会生成详细日志，便于追踪AI的决策过程和代码修改历史。
+
+### 2. 版本管理 (VersionManager)
+
+VersionManager 提供智能的版本控制功能：
+- 自动提取历史轮次的需求和响应
+- 生成格式化的历史执行记录作为上下文
+- 分析当前需求与历史需求的关系
+- 根据需要执行版本回退操作
+
+系统会分析新需求与先前修改的关系，判断是否需要回滚，确保代码修改的连贯性和一致性。
+
+### 3. 文件记忆 (FileMemory)
+
+FileMemory 模块为项目的每个文件维护详细描述：
+- 自动生成文件功能、结构和关系描述
+- 跟踪文件变更，更新受影响文件的描述
+- 提供上下文相关的文件选择
+
+这使得AI助手能够理解整个代码库的结构和功能，在修改代码时考虑到更广泛的项目上下文。
+
+## 安装方法
+
+使用pip安装：
+
+```bash
+pip install bella-issues-bot
+```
+
+## 使用方法
+
+bella-issues-bot 提供了多种使用方式：
+
+### 个人开发模式
+
+在日常开发中，您可以通过命令行界面或编程API使用bella-issues-bot：
+
+#### 命令行使用
+
+```bash
+bella-issues-bot --issue-id <问题ID> --requirement "你的需求描述"
+```
+
+更多高级选项和详细使用说明，请参考[客户端文档](./client/README.md)。
+
+#### 编程API使用
+
+```python
+from client.runner import run_workflow
+
+run_workflow(
+    issue_id=42,
+    requirement="创建一个简单的README文件",
+    core_temperature=0.7
+)
+```
+
+## 环境变量配置
+
+工具会读取以下环境变量：
+
+- `OPENAI_API_KEY`: OpenAI API密钥
+- `OPENAI_API_BASE`: OpenAI API基础URL
+- `GITHUB_REMOTE_URL`: GitHub远程仓库URL
+- `GITHUB_TOKEN`: GitHub身份验证令牌
+
+## 示例
+
+可以在[examples](./examples/)目录下找到使用示例。
+```
+
+# client/README.md (客户端使用说明)
+
+```markdown
+# Workflow 客户端
+
+一个强大的命令行接口和编程API，用于运行WorkflowEngine处理用户需求，支持个人开发助手模式和GitHub自动化工作流模式。
+
+## 记忆与上下文管理
+
+客户端依赖于强大的后台记忆系统，包括三个核心组件：
+
+### 日志管理 (LogManager)
+
+LogManager负责存储每次交互的详细记录：
+
+- **结构化存储**：日志按issue ID和轮次有序组织，便于检索
+- **完整性**：记录系统提示词、用户提示词、AI响应和文件修改
+- **差异追踪**：保存每个修改文件的完整差异信息
+
+所有日志保存在项目的`.eng/memory`目录下，按照`issues/#<issue-id>/round_<num>`格式组织，可随时查看历史交互。
+
+### 版本管理 (VersionManager)
+
+VersionManager提供智能版本控制功能：
+
+- **历史分析**：自动提取历史轮次的数据形成上下文
+- **需求整合**：在新需求与历史需求有冲突时，提供智能整合
+- **版本回退**：根据需要自动执行版本回退操作
+
+每次启动新的需求处理时，系统会：
+1. 提取过去所有轮次的需求和响应
+2. 格式化为结构化历史记录
+3. 分析新需求与历史的关系
+4. 决定是保持当前状态还是执行回退
+
+### 文件记忆 (FileMemory)
+
+FileMemory为AI提供项目文件的深度理解：
+
+- **自动描述**：为项目中的每个文件生成功能描述
+- **增量更新**：只更新被修改的文件描述，提高效率
+- **批量处理**：使用智能分批策略处理大型代码库
+- **失败处理**：对无法处理的文件提供重试机制
+
+当工作流运行时，系统会：
+1. 检测新建或修改的文件
+2. 使用AI生成这些文件的功能描述
+3. 将描述保存在`.eng/memory/file_details.txt`中
+4. 在后续需求处理时提供这些描述作为上下文
+
+## 工作模式
+
+bella-issues-bot 支持两种主要工作模式：
+
+- **客户端模式 (client)**：默认模式，适合作为个人开发助手使用，每次运行时基于project_dir目录下的当前代码状态进行操作。
+- **机器人模式 (bot)**：专为GitHub集成设计，会在project_dir目录下创建临时目录作为工作区，自动拉取issues对应的最新分支状态，处理完成后自动提交更改并在Issues中回复处理结果，最后清理临时工作区。
+## 命令行使用方式（个人开发助手模式）
+
+你可以通过以下两种方式从命令行运行WorkflowEngine：
+
+### 使用安装后的CLI命令
+
+```bash
+bella-issues-bot --issue-id 42 --requirement "创建一个README文件"
+```
+
+### 直接使用Python模块
+
+```bash
+python -m client.terminal --issue-id 42 --requirement "创建一个README文件"
+```
+
+### 命令行参数
+
+#### 基础参数
+
+- `--issue-id`：（必需）问题ID，用于跟踪和引用
+- `--requirement` 或 `--requirement-file`：（必需）具体需求描述或包含需求的文件路径
+- `--project-dir`：项目目录路径（默认：当前目录）
+
+#### AI模型配置
+
+- `--core-model`：核心AI操作使用的模型（默认：gpt-4o）
+- `--data-model`：数据操作使用的模型（默认：gpt-4o）
+- `--core-temperature`：核心模型的温度参数（默认：0.7）
+- `--data-temperature`：数据模型的温度参数（默认：0.7）
+
+#### 工作流配置
+
+- `--mode`：工作模式，可选"client"或"bot"（默认：client）
+  - `client`：个人开发助手模式，基于当前代码状态工作
+  - `bot`：GitHub自动化模式，拉取最新分支，自动提交并回复Issues
+- `--default-branch`：默认Git分支（默认：main）
+- `--base-url`：API调用的基础URL
+- `--api-key`：API密钥（也可以通过OPENAI_API_KEY环境变量设置）
+- `--github-remote-url`：GitHub远程URL
+- `--github-token`：GitHub令牌
+
+#### 执行控制
+
+- `--max-retry`：最大重试次数（默认：3）
+
+### 简易脚本使用
+
+你也可以使用提供的脚本简化命令行调用：
+
+```bash
+./scripts/run_bot.sh <问题ID> [需求文件路径]
+```
+
+## 编程方式使用
+
+你也可以在Python代码中以编程方式使用客户端包：
+
+```python
+from client.runner import run_workflow
+
+run_workflow(
+    issue_id=42,
+    requirement="为项目创建一个README文件",
+    core_model="gpt-4o",
+    data_model="gpt-4o",
+    core_temperature=0.7,
+    data_temperature=0.7
+)
+```
+
+## 环境变量
+
+工具会读取以下环境变量：
+
+- `OPENAI_API_KEY`：OpenAI的API密钥
+- `OPENAI_API_BASE`：OpenAI API的基础URL
+- `GITHUB_TOKEN`：GitHub身份验证令牌
+```
+
+这两个README文件为用户提供了全面的项目介绍和使用指南，特别着重说明了项目的记忆与上下文管理功能。项目README概述了整体功能和特性，而客户端README则详细介绍了命令行参数和使用方法，以及记忆系统的技术细节。

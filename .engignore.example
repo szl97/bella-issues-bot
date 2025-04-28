@@ -1,0 +1,24 @@
+# bella-issues-bot 忽略文件配置示例
+# 类似于.gitignore的语法
+# .gitignore中已经配置的规则，无需额外配置
+
+# 忽略所有日志文件
+*.log
+
+# 忽略构建和临时目录
+build/
+dist/
+tmp/
+.cache/
+
+# 忽略测试文件
+test_*.py
+*_test.py
+
+# 忽略大型数据文件
+*.csv
+*.parquet
+
+#必须配置
+.git/
+.eng/

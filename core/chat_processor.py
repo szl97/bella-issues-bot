@@ -7,15 +7,15 @@
 3. 记录聊天互动日志
 """
 
-import logging
 from copy import copy
 from dataclasses import dataclass
 from typing import Optional
 
 from core.ai import AIAssistant, AIConfig
+from core.log_config import get_logger
 from core.log_manager import LogManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 @dataclass
 class ChatProcessorConfig:

@@ -1,0 +1,526 @@
+# 项目文件描述
+
+
+- scripts/run_bot.sh: 便捷启动脚本，简化了命令行参数输入。检查参数并调用Python客户端模块，支持从文件读取需求或交互式输入需求。
+
+- client/cli.py: 命令行接口模块，提供解析命令行参数的功能，包含parse_args()、get_requirement_text()和build_config_from_args()函数，用于配置和运行WorkflowEngine。
+
+- client/terminal.py: 工作流引擎的终端入口点，提供命令行接口。实现run_workflow_from_terminal函数解析命令行参数、加载配置并运行工作流引擎。
+
+- client/runner.py: 工作流引擎的编程接口模块，提供run_workflow函数简化在Python脚本中调用工作流引擎的过程，处理配置参数和环境变量加载。
+
+- core/ai.py: AI助手模块，负责与AI模型交互。包含AIAssistant类和AIConfig数据类，封装了模型调用、工具集成和响应生成功能，支持流式输出。
+
+
+# 文件内容
+
+
+
+```
+File: scripts/run_bot.sh
+1 #!/bin/bash
+2 
+3 # 启动bella-issues-bot的帮助脚本
+4 # 此脚本简化了命令行参数的输入，便于快速使用
+5 
+6 # 检查是否提供了issue-id参数
+7 if [ -z "$1" ]; then
+8     echo "使用方法: $0 <issue-id> [需求文件路径]"
+9     echo ""
+10     echo "示例:"
+11     echo "  $0 42 ./requirements.txt  # 使用文件中的需求"
+12     echo "  $0 42                    # 将会要求您输入需求"
+13     exit 1
+14 fi
+15 
+16 python -m client.terminal --issue-id "$1" ${2:+--requirement-file "$2"}
+17
+```
+
+
+
+
+```
+File: client/cli.py
+1 """
+2 Command-line interface for the WorkflowEngine.
+3 Provides functionality to parse command-line arguments and run the engine.
+4 """
+5 
+6 import argparse
+7 import os
+8 import sys
+9 from typing import Optional, Dict, Any
+10 
+11 
+12 def parse_args() -> argparse.Namespace:
+13     """Parse command-line arguments for the WorkflowEngine."""
+14     parser = argparse.ArgumentParser(
+15         description="Run the WorkflowEngine to process user requirements"
+16     )
+17 
+18     # Required arguments
+19     parser.add_argument(
+20         "--project-dir", 
+21         type=str, 
+22         default=os.path.abspath(os.getcwd()),
+23         help="Path to the project directory (default: current directory)"
+24     )
+25     parser.add_argument(
+26         "--issue-id", 
+27         type=int, 
+28         required=True,
+29         help="The ID of the issue being processed"
+30     )
+31     parser.add_argument(
+32         "--requirement", 
+33         type=str, 
+34         help="The user requirement text"
+35     )
+36     parser.add_argument(
+37         "--requirement-file", 
+38         type=str, 
+39         help="Path to file containing the user requirement"
+40     )
+41 
+42     # Optional arguments for WorkflowEngineConfig
+43     parser.add_argument(
+44         "--core-model", 
+45         type=str, 
+46         default="gpt-4o",
+47         help="Model to use for core AI operations"
+48     )
+49     parser.add_argument(
+50         "--data-model", 
+51         type=str, 
+52         default="gpt-4o",
+53         help="Model to use for data operations"
+54     )
+55     parser.add_argument(
+56         "--core-temperature", 
+57         type=float, 
+58         default=0.7,
+59         help="Temperature for core model"
+60     )
+61     parser.add_argument(
+62         "--data-temperature", 
+63         type=float, 
+64         default=0.7,
+65         help="Temperature for data model"
+66     )
+67     parser.add_argument(
+68         "--max-retry", 
+69         type=int, 
+70         default=3,
+71         help="Maximum number of retry attempts"
+72     )
+73     parser.add_argument(
+74         "--default-branch", 
+75         type=str, 
+76         default="main",
+77         help="Default branch name"
+78     )
+79     parser.add_argument(
+80         "--mode", 
+81         type=str, 
+82         choices=["client", "bot"],
+83         default="client",
+84         help="Operation mode: 'client' or 'bot'"
+85     )
+86     parser.add_argument(
+87         "--base-url", 
+88         type=str, 
+89         help="Base URL for API calls"
+90     )
+91     parser.add_argument(
+92         "--api-key", 
+93         type=str, 
+94         help="API key for authentication"
+95     )
+96     parser.add_argument(
+97         "--github-remote-url", 
+98         type=str, 
+99         help="GitHub remote repository URL"
+100     )
+101     parser.add_argument(
+102         "--github-token", 
+103         type=str, 
+104         help="GitHub authentication token"
+105     )
+106     
+107     return parser.parse_args()
+108 
+109 
+110 def get_requirement_text(args: argparse.Namespace) -> Optional[str]:
+111     """Get requirement text from arguments or file."""
+112     if args.requirement:
+113         return args.requirement
+114     elif args.requirement_file:
+115         try:
+116             with open(args.requirement_file, 'r', encoding='utf-8') as file:
+117                 return file.read()
+118         except IOError as e:
+119             print(f"Error reading requirement file: {e}", file=sys.stderr)
+120             return None
+121     else:
+122         print("No requirement specified. Use --requirement or --requirement-file", file=sys.stderr)
+123         return None
+124 
+125 
+126 def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+127     """Build WorkflowEngineConfig parameters from command line arguments."""
+128     config_params = {
+129         "project_dir": args.project_dir,
+130         "issue_id": args.issue_id,
+131         "core_model": args.core_model,
+132         "data_model": args.data_model,
+133         "core_template": args.core_temperature,  # Note: using template to match original param name
+134         "data_template": args.data_temperature,  # Note: using template to match original param name
+135         "max_retry": args.max_retry,
+136         "default_branch": args.default_branch,
+137         "mode": args.mode,
+138     }
+139     
+140     # Add optional parameters if they're specified
+141     if args.base_url:
+142         config_params["base_url"] = args.base_url
+143     if args.api_key:
+144         config_params["api_key"] = args.api_key
+145     if args.github_remote_url:
+146         config_params["github_remote_url"] = args.github_remote_url
+147     if args.github_token:
+148         config_params["github_token"] = args.github_token
+149         
+150     return config_params
+151
+```
+
+
+
+
+```
+File: client/terminal.py
+1 """
+2 Terminal entrypoint for the WorkflowEngine.
+3 Provides functionality to run the engine from terminal with command-line arguments.
+4 """
+5 import logging
+6 import os
+7 import sys 
+8 from dotenv import load_dotenv
+9 
+10 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+11 from client.cli import parse_args, get_requirement_text, build_config_from_args
+12 from core.log_config import setup_logging
+13 
+14 
+15 def run_workflow_from_terminal() -> str:
+16     """
+17     Main entry point for running the workflow engine from terminal.
+18     Parses command line arguments and runs the workflow engine.
+19     """
+20     # Load environment variables from .env file if present
+21     load_dotenv()
+22     
+23     # Parse command line arguments
+24     args = parse_args()
+25     
+26     # Get requirement text
+27     requirement = get_requirement_text(args)
+28     if not requirement:
+29         sys.exit(1)
+30     
+31     # Build config from arguments
+32     config_params = build_config_from_args(args)
+33     
+34     # Try to get API key from environment if not provided as argument
+35     if "api_key" not in config_params and os.environ.get("OPENAI_API_KEY"):
+36         config_params["api_key"] = os.environ.get("OPENAI_API_KEY")
+37         
+38     # Create the workflow engine config
+39     config = WorkflowEngineConfig(**config_params)
+40     
+41     # Initialize and run the workflow engine
+42     engine = WorkflowEngine(config)
+43     response = engine.process_requirement(requirement)
+44     
+45     # Print the response to the terminal if available
+46     if response:
+47         print(f"\nResponse:\n{response}")
+48     
+49     return response if response else ""
+50 
+51 
+52 if __name__ == "__main__":
+53     setup_logging(log_level=logging.INFO)
+54     response = run_workflow_from_terminal()
+55
+```
+
+
+
+
+```
+File: client/runner.py
+1 """
+2 Programmatic API for running the WorkflowEngine.
+3 Provides a simplified interface for use in Python scripts.
+4 """
+5 
+6 import os
+7 from typing import Optional, Dict, Any, Union
+8 
+9 from dotenv import load_dotenv
+10 
+11 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+12 
+13 
+14 def run_workflow(
+15     issue_id: int,
+16     requirement: str,
+17     project_dir: Optional[str] = None,
+18     core_model: str = "gpt-4o",
+19     data_model: str = "gpt-4o",
+20     core_temperature: float = 0.7,
+21     data_temperature: float = 0.7,
+22     max_retry: int = 3,
+23     default_branch: str = "main",
+24     mode: str = "client",
+25     base_url: Optional[str] = None,
+26     api_key: Optional[str] = None,
+27     github_remote_url: Optional[str] = None,
+28     github_token: Optional[str] = None,
+29     **kwargs: Dict[str, Any]
+30 ) -> None:
+31     """Run the WorkflowEngine with the given configuration."""
+32     # Load environment variables
+33     load_dotenv()
+34     
+35     # Use current directory if no project_dir specified
+36     if project_dir is None:
+37         project_dir = os.getcwd()
+38     
+39     # Create config with provided parameters
+40     config = WorkflowEngineConfig(
+41         project_dir=project_dir, issue_id=issue_id, core_model=core_model,
+42         data_model=data_model, core_template=core_temperature, data_template=data_temperature,
+43         max_retry=max_retry, default_branch=default_branch, mode=mode,
+44         base_url=base_url, api_key=api_key, github_remote_url=github_remote_url,
+45         github_token=github_token, **kwargs
+46     )
+47     
+48     # Run the workflow engine
+49     engine = WorkflowEngine(config)
+50     response = engine.process_requirement(requirement)
+51     
+52     return response
+53
+```
+
+
+
+
+```
+File: core/ai.py
+1 from dataclasses import dataclass
+2 from typing import Any, List, Optional
+3 
+4 from dotenv import load_dotenv
+5 from langchain.agents import AgentExecutor, create_openai_tools_agent
+6 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+7 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+8 from langchain_core.runnables.base import RunnableSequence
+9 from langchain_core.tools import BaseTool, Tool
+10 from langchain_openai import ChatOpenAI
+11 
+12 from core.log_config import get_logger
+13 
+14 logger = get_logger(__name__)
+15 
+16 
+17 @dataclass
+18 class AIConfig:
+19     model_name: str = "gpt-4o"
+20     temperature: float = 0.7
+21     verbose: bool = True
+22     max_retries: int = 3
+23     request_timeout: int = 180
+24     sys_prompt: str = "You are a helpful AI assistant."
+25     base_url: Optional[str] = None
+26     api_key: Optional[str] = None
+27 
+28 
+29 class AIAssistant:
+30     """AI 助手类，负责与 AI 模型交互"""
+31 
+32     def __init__(self, config: AIConfig, tools: Optional[List[BaseTool]] = None):
+33         """
+34         初始化 AI 助手
+35 
+36         Args:
+37             config: AIConfig 实例，包含必要的配置信息
+38             tools: 可选的工具列表
+39         """
+40         self.config = config
+41         self.tools = tools or []
+42         self.llm = self._init_llm()
+43         self.agent = None
+44 
+45         # Initialize agent if tools are provided
+46         if self.tools:
+47             self.agent = self._init_agent()
+48 
+49     def _init_llm(self) -> ChatOpenAI:
+50         """Initialize the language model"""
+51         callbacks = [StreamingStdOutCallbackHandler()] if self.config.verbose else None
+52         
+53         return ChatOpenAI(
+54             base_url=self.config.base_url,
+55             api_key=self.config.api_key,
+56             model=self.config.model_name,
+57             temperature=self.config.temperature,
+58             timeout=self.config.request_timeout,
+59             max_retries=self.config.max_retries,
+60             callbacks=callbacks,
+61         )
+62 
+63     def _init_agent(self) -> AgentExecutor:
+64         """Initialize the agent with tools"""
+65         # 创建提示模板
+66         prompt = ChatPromptTemplate.from_messages([
+67             ("system", self.config.sys_prompt),
+68             ("human", "{input}"),
+69             MessagesPlaceholder(variable_name="agent_scratchpad"),
+70         ])
+71 
+72         # 创建代理
+73         agent = create_openai_tools_agent(self.llm, self.tools, prompt)
+74         
+75         # 创建代理执行器
+76         return AgentExecutor(
+77             agent=agent, 
+78             tools=self.tools, 
+79             verbose=self.config.verbose,
+80             max_iterations=5,
+81             handle_parsing_errors=True
+82         )
+83 
+84     def _create_simple_chain(self) -> RunnableSequence:
+85         """创建简单的对话链，不使用工具"""
+86         from langchain_core.prompts import ChatPromptTemplate
+87         
+88         # 创建提示模板
+89         prompt = ChatPromptTemplate.from_messages([
+90             ("system", self.config.sys_prompt),
+91             ("human", "{input}")
+92         ])
+93         
+94         # 创建简单链
+95         chain = prompt | self.llm | (lambda x: x.content)
+96         
+97         return chain
+98 
+99     def add_tool(self, tool: BaseTool) -> None:
+100         """
+101         添加工具
+102 
+103         Args:
+104             tool: 要添加的工具
+105         """
+106         # 检查是否已经有同名工具
+107         for existing_tool in self.tools:
+108             if existing_tool.name == tool.name:
+109                 # 替换同名工具
+110                 self.tools.remove(existing_tool)
+111                 break
+112                 
+113         # 添加新工具
+114         self.tools.append(tool)
+115         
+116         # 重新初始化代理
+117         self.agent = self._init_agent()
+118 
+119     def generate_response(
+120         self, prompt: str, use_tools: bool = False, **kwargs: Any
+121     ) -> Any:
+122         """
+123         生成响应
+124 
+125         Args:
+126             prompt: 用户的提示词
+127             use_tools: 是否使用工具
+128             **kwargs: 其他参数
+129 
+130         Returns:
+131             any: 生成的响应
+132         """
+133         try:
+134             if use_tools and self.tools:
+135                 # 确保代理已初始化
+136                 if self.agent is None:
+137                     self.agent = self._init_agent()
+138                     
+139                 # 使用代理生成响应
+140                 response = self.agent.invoke({"input": prompt})
+141                 return response["output"]
+142             else:
+143                 # 使用简单链生成响应，始终使用流式输出
+144                 chain = self._create_simple_chain()
+145                 
+146                 # 使用流式输出
+147                 response_chunks = []
+148                 for chunk in chain.stream({"input": prompt}):
+149                     response_chunks.append(chunk)
+150                 
+151                 # response_chunks 连接起来就是完整的响应结果
+152                 return "".join(response_chunks)
+153         except Exception as e:
+154             logger.error(f"生成响应时出错: {str(e)}")
+155             raise
+156 
+157 
+158 def create_example_tool() -> Tool:
+159     """Create an example tool for demonstration"""
+160 
+161     def calculator(expression: str) -> str:
+162         try:
+163             result = eval(expression)
+164             return f"计算结果: {result}"
+165         except Exception as e:
+166             logger.error(f"计算错误: {str(e)}")
+167             return f"计算错误: {str(e)}"
+168 
+169     return Tool.from_function(
+170         func=calculator,
+171         name="calculator",
+172         description="计算数学表达式",
+173     )
+174 
+175 
+176 if __name__ == "__main__":
+177     # 设置环境变量
+178     load_dotenv()
+179     
+180     # 创建AI助手
+181     ai_assistant = AIAssistant(
+182         config=AIConfig(model_name="gpt-4o", temperature=0.7)
+183     )
+184     
+185     # 添加示例工具
+186     ai_assistant.add_tool(create_example_tool())
+187     
+188     # 测试生成响应
+189     response = ai_assistant.generate_response(
+190         "计算 3 + 5 的结果是多少?", use_tools=True
+191     )
+192     
+193     logger.info(f"Response: {response}")
+194
+```
+
+
+
+
+# 用户需求
+
+现在的启动脚本参数太长了，提供简称。再加一个model和温度代表把core和data一起配置了。也可以用单独的core和data分别配置。用中文写描述。

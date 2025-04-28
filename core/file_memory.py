@@ -1,9 +1,9 @@
 import json
-import logging
 import os
 import time
+import datetime
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional, Set, Union
 
 from dotenv import load_dotenv
 from langchain.tools import Tool
@@ -11,16 +11,24 @@ from langchain.tools import Tool
 from core.ai import AIAssistant, AIConfig
 from core.file_fetcher import FileFetcher
 from core.git_manager import GitManager, GitConfig
+from core.log_manager import LogManager
+from core.log_config import get_logger
 
-logger = logging.getLogger(__name__)
-
+logger = get_logger(__name__)
 
 @dataclass
 class FileMemoryConfig:
     """配置文件记忆管理"""
     project_dir: str
-    ai_config: AIConfig
     git_manager: GitManager
+    ai_config: AIConfig
+    # 可选的LogManager，用于获取上一轮修改信息
+    log_manager: Optional[LogManager] = None
+
+
+class FileDetail:
+    """文件详细信息类"""
+    pass
 
 
 class FileMemory:
@@ -33,13 +41,16 @@ class FileMemory:
     RETRY_DELAY = 30    # 重试延迟（秒）
     # 每批次最大行数和字符数限制
     MAX_LINES_PER_BATCH = 10000  # 最大行数
-    MAX_CHARS_PER_BATCH = 100000  # 最大字符数，约为 100KB
-    MAX_FILES_PER_BATCH = 100  # 每批次最多处理的文件数
+    MAX_CHARS_PER_BATCH = 50000  # 最大字符数，约为 100KB
+    MAX_FILES_PER_BATCH = 20  # 每批次最多处理的文件数
 
     def __init__(self, config: FileMemoryConfig):
         self.config = config
         self.memory_path = os.path.join(config.project_dir, self.FILE_DETAILS_PATH)
         self.git_id_path = os.path.join(config.project_dir, self.GIT_ID_FILE)
+
+        # 保存LogManager引用
+        self.log_manager = config.log_manager
 
         # 初始化 AI 助手
         self.ai_assistant = AIAssistant(config=self.config.ai_config, tools=[self._create_batch_description_tool()])
@@ -245,7 +256,7 @@ class FileMemory:
             new_failed_files = [f for f in failed_files if f not in processed_files]
             self._write_failed_files(new_failed_files)
             
-            logger.info(f"成功处理了 {len(processed_files)} 个之前失败的文件，还有 {len(new_failed_files)} 个文件失败")
+            logger.info(f"成功处理了 {len(processed_files)} 个之前失败的文件，还有 {len(new_failed_files)} 个文件失败, 如果存在要忽略的文件，请在项目根目录下配置 .eng/.engignore 配置方式同.gitignore")
         
         return descriptions
 
@@ -257,7 +268,7 @@ class FileMemory:
             with open(full_path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
-            logger.error(f"读取文件 {filepath} 失败: {str(e)}")
+            logger.error(f"读取文件 {filepath} 失败: {str(e)}, 如果要忽略该文件，请在项目根目录下配置 .eng/.engignore 配置方式同.gitignore")
             return ""
 
     def _process_files_in_batches(self, files_with_content: List[Dict[str, str]]) -> Dict[str, str]:
@@ -350,32 +361,34 @@ class FileMemory:
 
     def update_file_details(self) -> None:
         """更新文件描述信息"""
-        # 获取当前的 Git ID
-        current_git_id = self.git_manager.get_current_commit_id()
-        saved_git_id = self._read_git_id()
-
         # 获取所有文件
-        all_files = FileFetcher.get_all_files_without_ignore(self.config.project_dir)
-
+        all_files = set(FileFetcher.get_all_files_without_ignore(self.config.project_dir))
+        
         # 读取现有描述
         existing_details = self._read_file_details()
-
-        if saved_git_id:
-            # 获取变更的文件
-            changed_files = set(
-                self.git_manager.get_changed_files(saved_git_id, current_git_id)
-            ) & all_files
-            new_files = all_files - set(existing_details.keys())
-            files_to_process = list(changed_files | new_files)
-
-
+        
+        files_to_process = []
+        
+        # 如果有LogManager，使用它获取上一轮修改的文件
+        if self.log_manager:
+            # 获取上一轮修改的文件
+            log_modified_files = self._get_last_round_modified_files()
+            
+            # 只处理LogManager中标记为修改的文件
+            files_to_process = list(log_modified_files & all_files)
+            
             # 删除不存在的文件的描述
             existing_details = {
                 k: v for k, v in existing_details.items() if k in all_files
             }
+            
+            logger.info(f"使用LogManager方式更新文件描述，处理{len(files_to_process)}个修改的文件")
         else:
-            # 首次运行，处理所有文件
-            files_to_process = list(all_files)
+            # 如果没有LogManager，回退到Git方式
+            current_git_id = self.git_manager.get_current_commit_id()
+            saved_git_id = self._read_git_id()
+            files_to_process = self._get_changed_files_git(all_files, existing_details, current_git_id, saved_git_id)
+            logger.info(f"使用Git方式更新文件描述，处理{len(files_to_process)}个文件")
 
         # 处理需要更新的文件
         if files_to_process:
@@ -384,7 +397,63 @@ class FileMemory:
 
         # 保存结果
         self._write_file_details(existing_details)
-        self._write_git_id(current_git_id)
+        if not self.log_manager:
+            # 只有使用Git方式时才更新Git ID
+            current_git_id = self.git_manager.get_current_commit_id()
+            self._write_git_id(current_git_id)
+
+    def _get_last_round_modified_files(self) -> set:
+        """
+        从LogManager获取上一轮修改的文件列表
+        
+        Returns:
+            set: 上一轮修改的文件路径集合
+        """
+        if not self.log_manager:
+            logger.info("未提供LogManager，无法获取上一轮修改的文件")
+            return set()
+        
+        try:
+            # 获取当前轮次
+            current_round = self.log_manager.get_current_round()
+            
+            # 获取上一轮的日志条目
+            if current_round > 1:
+                prev_round = current_round - 1
+                log_entry = self.log_manager.get_issue_round_log_entry(prev_round, include_diff=True)
+                
+                if log_entry and log_entry.modified_files:
+                    # 从diff_info中提取文件路径
+                    modified_files = set()
+                    for diff_info in log_entry.modified_files:
+                        if diff_info.file_name and diff_info.is_create:
+                            modified_files.add(diff_info.file_name)
+                    
+                    logger.info(f"从LogManager获取到上一轮({prev_round})修改的文件: {len(modified_files)}个")
+                    return modified_files
+            return set()
+        except Exception as e:
+            logger.error(f"获取上一轮修改的文件失败: {str(e)}")
+            return set()
+
+    def _get_changed_files_git(self, all_files: Set[str], existing_details: Dict[str, str], 
+                             current_git_id: str, saved_git_id: Optional[str]) -> List[str]:
+        """使用Git方式获取需要处理的文件列表"""
+        if saved_git_id:
+            # 获取自上次运行以来修改的文件
+            changed_files = set(
+                self.git_manager.get_changed_files(saved_git_id, current_git_id)
+            ) & all_files
+            
+            logger.info(f"从Git获取到变更文件: {len(changed_files)}个")
+            
+            new_files = all_files - set(existing_details.keys())
+            logger.info(f"检测到新文件: {len(new_files)}个")
+            
+            return list(changed_files | new_files)
+        else:
+            # 首次运行，处理所有文件
+            return list(all_files)
 
     @classmethod
     def get_file_descriptions(cls, project_dir: str) -> Dict[str, str]:
@@ -432,7 +501,8 @@ if __name__ == "__main__":
     memory = FileMemory(
         FileMemoryConfig(
             ai_config=AIConfig(temperature=1, model_name="claude-3.7-sonnet"),
-            git_manager=GitManager(config=GitConfig(project_dir))
+            git_manager=GitManager(config=GitConfig(repo_path=project_dir)),
+            log_manager=None
         )
     )
 

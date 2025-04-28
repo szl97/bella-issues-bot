@@ -1,0 +1,838 @@
+# 项目文件描述
+
+
+- pyproject.toml: 项目配置文件，定义bella-issues-bot的元数据、依赖项和工具配置。包含项目版本、描述、作者等信息，以及Python依赖库配置、代码格式化工具设置。是项目构建和包管理的核心配置文件。
+
+- client/cli.py: 命令行接口模块，提供解析命令行参数的功能，包含parse_args()、get_requirement_text()和build_config_from_args()函数，用于配置和运行WorkflowEngine。
+
+- client/terminal.py: 工作流引擎的终端入口点，提供命令行接口。实现run_workflow_from_terminal函数解析命令行参数、加载配置并运行工作流引擎。
+
+- client/runner.py: 工作流引擎的编程接口模块，提供run_workflow函数简化在Python脚本中调用工作流引擎的过程，处理配置参数和环境变量加载。
+
+- scripts/run_bot.sh: 便捷启动脚本，简化了命令行参数输入。检查参数并调用Python客户端模块，支持从文件读取需求或交互式输入需求。
+
+
+# 文件内容
+
+
+
+```
+File: pyproject.toml
+1 [tool.poetry]
+2 name = "bella-issues-bot"
+3 version = "0.1.1"
+4 description = "bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：个人开发助手模式：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。GitHub自动化模式：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。"
+5 authors = ["saizhuolin"]
+6 license = "MIT"
+7 readme = "README.md"
+8 homepage = "https://github.com/szl97/bella-issues-bot"
+9 repository = "https://github.com/szl97/bella-issues-bot"
+10 documentation = "https://github.com/szl97/bella-issues-bot"
+11 packages = [
+12     {include = "core"},
+13     {include = "client"}
+14 ]
+15 classifiers = [
+16   "Development Status :: 4 - Beta",
+17   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+18 ]
+19 
+20 [build-system]
+21 requires = ["poetry-core>=1.0.0"]
+22 build-backend = "poetry.core.masonry.api"
+23 
+24 [tool.poetry.dependencies]
+25 python = ">=3.10,<3.13"
+26 gitpython = "^3.1.40"
+27 PyGithub = "^2.1.1"
+28 langchain = ">=0.3.0,<0.4.0"
+29 langchain-openai = ">=0.1.0"
+30 langchain-core = ">=0.3.0,<0.4.0"
+31 langchain-community = ">=0.3.0,<0.4.0"
+32 python-dotenv = "^1.0.0"
+33 pydantic = "^2.5.0"
+34 openai = "^1.3.5"
+35 pytest = "^7.4.0"
+36 pathspec = ">=0.9.0"
+37 toml = ">=0.10.2"
+38 typing-extensions = ">=4.0.0"
+39 jinja2 = ">=3.1.0,<4.0.0"
+40 colorlog = ">=6.8.0,<7.0.0"
+41 colorama = ">=0.4.4"
+42 argparse = ">=1.4.0"
+43 pyyaml = ">=6.0"
+44 
+45 [tool.poetry.scripts]
+46 bella-issues-bot = 'client.terminal:run_workflow_from_terminal'
+47 
+48 [tool.ruff]
+49 select = ["F", "E", "W", "I001"]
+50 show-fixes = false
+51 target-version = "py310"
+52 task-tags = ["TODO", "FIXME"]
+53 extend-ignore = ["E501", "E722"]
+54 
+55 [tool.black]
+56 target-version = ["py310"]
+57 
+58 [tool.ruff.isort]
+59 known-first-party = []
+60 known-third-party = []
+61 section-order = [
+62   "future",
+63   "standard-library",
+64   "third-party",
+65   "first-party",
+66   "local-folder",
+67 ]
+68 combine-as-imports = true
+69 split-on-trailing-comma = false
+70 lines-between-types = 1
+71
+```
+
+
+
+
+```
+File: client/cli.py
+1 """
+2 Command-line interface for the WorkflowEngine.
+3 Provides functionality to parse command-line arguments and run the engine.
+4 """
+5 
+6 import argparse
+7 import os
+8 import sys
+9 from typing import Optional, Dict, Any
+10 
+11 
+12 def parse_args() -> argparse.Namespace:
+13     """Parse command-line arguments for the WorkflowEngine."""
+14     parser = argparse.ArgumentParser(
+15         description="Run the WorkflowEngine to process user requirements"
+16     )
+17 
+18     # Required arguments
+19     parser.add_argument(
+20         "--project-dir", 
+21         "-p",
+22         type=str, 
+23         default=os.path.abspath(os.getcwd()),
+24         help="Path to the project directory (default: current directory)"
+25     )
+26     parser.add_argument(
+27         "--issue-id", 
+28         "-i",
+29         type=int, 
+30         required=True,
+31         help="The ID of the issue being processed"
+32     )
+33     parser.add_argument(
+34         "--requirement", 
+35         "-r",
+36         type=str, 
+37         help="The user requirement text"
+38     )
+39     parser.add_argument(
+40         "--requirement-file", 
+41         "-f",
+42         type=str, 
+43         help="Path to file containing the user requirement"
+44     )
+45 
+46     # Optional arguments for WorkflowEngineConfig
+47     # 统一模型配置
+48     parser.add_argument(
+49         "--model", 
+50         "-m",
+51         type=str, 
+52         help="Model to use for both core and data operations (优先级高于单独配置)"
+53     )
+54     parser.add_argument(
+55         "--temperature",
+56         "-t",
+57         type=float, 
+58         help="Temperature for both core and data models (优先级高于单独配置)"
+59     )
+60     
+61     # 独立模型配置
+62     parser.add_argument(
+63         "--core-model", 
+64         "--cm",
+65         type=str, 
+66         default="gpt-4o",
+67         help="Model to use for core AI operations (当未设置--model时使用)"
+68     )
+69     parser.add_argument(
+70         "--data-model", 
+71         "--dm",
+72         type=str, 
+73         default="gpt-4o",
+74         help="Model to use for data operations (当未设置--model时使用)"
+75     )
+76     parser.add_argument(
+77         "--core-temperature",
+78         "--ct",
+79         type=float, 
+80         default=0.7,
+81         help="Temperature for core model (当未设置--temperature时使用)"
+82     )
+83     parser.add_argument(
+84         "--data-temperature",
+85         "--dt",
+86         type=float, 
+87         default=0.7,
+88         help="Temperature for data model (当未设置--temperature时使用)"
+89     )
+90     parser.add_argument(
+91         "--max-retry", 
+92         "--retry",
+93         type=int, 
+94         default=3,
+95         help="Maximum number of retry attempts"
+96     )
+97     parser.add_argument(
+98         "--default-branch", 
+99         "--branch",
+100         type=str, 
+101         default="main",
+102         help="Default branch name"
+103     )
+104     parser.add_argument(
+105         "--mode",
+106         "-md",
+107         type=str,
+108         choices=["client", "bot"],
+109         default="client",
+110         help="Operation mode: 'client' or 'bot'"
+111     )
+112     parser.add_argument(
+113         "--base-url",
+114         "-u",
+115         type=str,
+116         help="Base URL for API calls"
+117     )
+118     parser.add_argument(
+119         "--api-key",
+120         "-k",
+121         type=str,
+122         help="API key for authentication"
+123     )
+124     parser.add_argument(
+125         "--github-remote-url",
+126         "--git-url",
+127         type=str,
+128         help="GitHub remote repository URL"
+129     )
+130     parser.add_argument(
+131         "--github-token",
+132         "--git-token",
+133         type=str,
+134         help="GitHub authentication token"
+135     )
+136     
+137     return parser.parse_args()
+138 
+139 
+140 def get_requirement_text(args: argparse.Namespace) -> Optional[str]:
+141     """Get requirement text from arguments or file."""
+142     if args.requirement:
+143         return args.requirement
+144     elif args.requirement_file:
+145         try:
+146             with open(args.requirement_file, 'r', encoding='utf-8') as file:
+147                 return file.read()
+148         except IOError as e:
+149             print(f"Error reading requirement file: {e}", file=sys.stderr)
+150             return None
+151     else:
+152         print("No requirement specified. Use --requirement or --requirement-file", file=sys.stderr)
+153         return None
+154 
+155 
+156 def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+157     """Build WorkflowEngineConfig parameters from command line arguments."""
+158     
+159     # 处理统一的模型和温度配置
+160     core_model = args.core_model
+161     data_model = args.data_model
+162     core_temperature = args.core_temperature
+163     data_temperature = args.data_temperature
+164     
+165     # 如果设置了统一模型，则覆盖个别设置
+166     if args.model:
+167         core_model = args.model
+168         data_model = args.model
+169         
+170     # 如果设置了统一温度，则覆盖个别设置
+171     if args.temperature is not None:
+172         core_temperature = args.temperature
+173         data_temperature = args.temperature
+174     
+175     config_params = {
+176         "project_dir": args.project_dir,
+177         "issue_id": args.issue_id,
+178         "core_model": core_model,
+179         "data_model": data_model,
+180         "core_template": core_temperature,  # Note: using template to match original param name
+181         "data_template": data_temperature,  # Note: using template to match original param name
+182         "max_retry": args.max_retry, 
+183         "default_branch": args.default_branch,
+184         "mode": args.mode,
+185     }
+186     
+187     # Add optional parameters if they're specified
+188     if args.base_url:
+189         config_params["base_url"] = args.base_url
+190     if args.api_key:
+191         config_params["api_key"] = args.api_key
+192     if args.github_remote_url:
+193         config_params["github_remote_url"] = args.github_remote_url
+194     if args.github_token:
+195         config_params["github_token"] = args.github_token
+196         
+197     return config_params
+198
+```
+
+
+
+
+```
+File: client/terminal.py
+1 """
+2 Terminal entrypoint for the WorkflowEngine.
+3 Provides functionality to run the engine from terminal with command-line arguments.
+4 """
+5 import logging
+6 import os
+7 import sys
+8 from dotenv import load_dotenv
+9 
+10 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+11 from client.cli import parse_args, get_requirement_text, build_config_from_args
+12 from core.log_config import setup_logging
+13 
+14 
+15 def run_workflow_from_terminal() -> str:
+16     """
+17     Main entry point for running the workflow engine from terminal.
+18     Parses command line arguments and runs the workflow engine.
+19     """
+20     # Load environment variables from .env file if present
+21     load_dotenv()
+22     
+23     # Parse command line arguments
+24     args = parse_args()
+25     
+26     # Get requirement text
+27     requirement = get_requirement_text(args)
+28     if not requirement:
+29         sys.exit(1)
+30     
+31     # Build config from arguments
+32     config_params = build_config_from_args(args)
+33     
+34     # Try to get API key from environment if not provided as argument
+35     if "api_key" not in config_params and os.environ.get("OPENAI_API_KEY"):
+36         config_params["api_key"] = os.environ.get("OPENAI_API_KEY")
+37     
+38     # Create the workflow engine config
+39     config = WorkflowEngineConfig(**config_params)
+40     
+41     # Initialize and run the workflow engine
+42     engine = WorkflowEngine(config)
+43     response = engine.process_requirement(requirement)
+44     
+45     # Print the response to the terminal if available
+46     if response:
+47         print(f"\nResponse:\n{response}")
+48     
+49     return response if response else ""
+50 
+51 
+52 if __name__ == "__main__":
+53     setup_logging(log_level=logging.INFO)
+54     response = run_workflow_from_terminal()
+55 
+56
+```
+
+
+
+
+```
+File: client/runner.py
+1 """
+2 Programmatic API for running the WorkflowEngine.
+3 Provides a simplified interface for use in Python scripts.
+4 """
+5 
+6 import os
+7 from typing import Optional, Dict, Any, Union
+8 
+9 from dotenv import load_dotenv
+10 
+11 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+12 
+13 
+14 def run_workflow(
+15     issue_id: int,
+16     requirement: str,
+17     project_dir: Optional[str] = None,
+18     model: Optional[str] = None,  # 统一的模型设置
+19     core_model: Optional[str] = "gpt-4o",
+20     data_model: Optional[str] = None,  # 默认与core_model相同
+21     temperature: Optional[float] = None,  # 统一的温度设置
+22     core_temperature: float = 0.7,
+23     data_temperature: float = 0.7,
+24     max_retry: int = 3,
+25     default_branch: str = "main",
+26     mode: str = "client",
+27     base_url: Optional[str] = None,
+28     api_key: Optional[str] = None,
+29     github_remote_url: Optional[str] = None,
+30     github_token: Optional[str] = None,
+31     **kwargs: Dict[str, Any]
+32 ) -> None:
+33     """Run the WorkflowEngine with the given configuration."""
+34     # Load environment variables
+35     load_dotenv()
+36     
+37     # Use current directory if no project_dir specified
+38     if project_dir is None:
+39         project_dir = os.getcwd()
+40     
+41     # 处理统一的模型配置
+42     if model is not None:
+43         core_model = model
+44         data_model = model
+45     
+46     # 如果未指定data_model，则默认与core_model相同
+47     if data_model is None:
+48         data_model = core_model
+49     
+50     # 处理统一的温度配置
+51     if temperature is not None:
+52         core_temperature = temperature
+53         data_temperature = temperature
+54     
+55     # Create config with provided parameters
+56     config = WorkflowEngineConfig(
+57         project_dir=project_dir, issue_id=issue_id, 
+58         core_model=core_model, data_model=data_model,
+59         core_template=core_temperature, data_template=data_temperature,
+60         max_retry=max_retry, default_branch=default_branch, mode=mode, 
+61         base_url=base_url, api_key=api_key, github_remote_url=github_remote_url,
+62         github_token=github_token
+63     )
+64     
+65     # Run the workflow engine
+66     engine = WorkflowEngine(config)
+67     response = engine.process_requirement(requirement)
+68     
+69     return response
+70
+```
+
+
+
+
+```
+File: scripts/run_bot.sh
+1 #!/bin/bash
+2 
+3 # 启动bella-issues-bot的帮助脚本
+4 # 此脚本简化了命令行参数的输入，便于快速使用
+5 # 支持简化的参数选项，调用Python客户端模块
+6 
+7 show_help() {
+8     echo "使用方法: $0 <issue-id> [选项] [需求文件路径]"
+9     echo ""
+10     echo "必需参数:"
+11     echo "  <issue-id>               问题ID（必填）"
+12     echo ""
+13     echo "选项:"
+14     echo "  -m, --model MODEL        同时设置core和data模型名称"
+15     echo "  -t, --temperature TEMP          同时设置core和data模型温度"
+16     echo "  --cm, --core-model MODEL 单独设置core模型名称"
+17     echo "  --dm, --data-model MODEL 单独设置data模型名称"
+18     echo "  --ct, --core-temperature TEMP   单独设置core模型温度"
+19     echo "  --dt, --data-temperature TEMP   单独设置data模型温度"
+20     echo "  -k, --key KEY            设置API密钥"
+21     echo "  -h, --help               显示此帮助信息"
+22     echo ""
+23     echo "示例:"
+24     echo "  $0 42 ./requirements.txt             # 使用文件中的需求"
+25     echo "  $0 42 -m gpt-4-turbo                # 设置所有模型为gpt-4-turbo"
+26     echo "  $0 42 -m gpt-4-turbo -t 0.9         # 设置所有模型为gpt-4-turbo，温度为0.9"
+27     echo "  $0 42 --cm gpt-4-turbo --dm gpt-3.5-turbo  # 分别设置不同模型"
+28     echo ""
+29 }
+30 
+31 # 检查是否请求帮助
+32 if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+33     show_help
+34     exit 0
+35 fi
+36 
+37 # 检查是否提供了issue-id参数
+38 if [ -z "$1" ] || [[ "$1" == -* ]]; then
+39     echo "错误: 必须提供issue-id作为第一个参数"
+40     show_help
+41     exit 1
+42 fi
+43 
+44 ISSUE_ID=$1
+45 shift  # 移除第一个参数，使其他参数可以按顺序处理
+46 
+47 # 检查最后一个参数是否是一个文件（不以连字符开头）
+48 ARGS=("$@")
+49 if [ ${#ARGS[@]} -gt 0 ] && [[ ! "${ARGS[-1]}" == -* ]] && [ -f "${ARGS[-1]}" ]; then
+50     python -m client.terminal -i $ISSUE_ID --requirement-file "${ARGS[-1]}" "${ARGS[@]:0:${#ARGS[@]}-1}"
+51 else
+52     python -m client.terminal -i $ISSUE_ID "$@"
+53 fi
+54
+```
+
+
+
+
+# 历史执行信息
+
+【round_1】
+requirement: 
+写一个初始化file-memory的客户端，不提供logManager只能通过gitManager的方式初始化
+agent_response: 
+I'll create a client script to initialize a FileMemory instance using only GitManager (without LogManager). This script will be designed to update file descriptions for a given project directory.
+
+Let me analyze the requirements first:
+1. Create a client script to initialize FileMemory
+2. Use only GitManager for initialization (no LogManager)
+3. Create functions to handle common operations like updating file details
+
+Let's implement this:
+
+```diff
+--- /dev/null
++++ client/file_memory_client.py
+@@ -0,0 +1,112 @@
++"""
++File Memory Client
++
++A standalone client for initializing and managing FileMemory without LogManager.
++Uses GitManager to track file changes and update file descriptions.
++"""
++
++import argparse
++import os
++import sys
++from pathlib import Path
++from typing import Optional
++
++from dotenv import load_dotenv
++
++from core.ai import AIConfig
++from core.file_memory import FileMemory, FileMemoryConfig
++from core.git_manager import GitManager, GitConfig
++from core.log_config import setup_logging, get_logger
++
++logger = get_logger(__name__)
++
++
++def initialize_file_memory(
++    project_dir: str,
++    model_name: str = "gpt-4o",
++    temperature: float = 0.7,
++    api_key: Optional[str] = None,
++    base_url: Optional[str] = None,
++    remote_url: Optional[str] = None,
++    auth_token: Optional[str] = None,
++) -> FileMemory:
++    """
++    Initialize FileMemory using GitManager without LogManager.
++    
++    Args:
++        project_dir: Path to the project directory
++        model_name: AI model to use for generating file descriptions
++        temperature: Temperature setting for AI responses
++        api_key: API key for AI service (will use env var if None)
++        base_url: Base URL for AI service (will use default if None)
++        remote_url: Git remote URL (will use env var if None)
++        auth_token: Git authentication token (will use env var if None)
++        
++    Returns:
++        Initialized FileMemory instance
++    """
++    # Create AI config
++    ai_config = AIConfig(
++        model_name=model_name,
++        temperature=temperature,
++        api_key=api_key,
++        base_url=base_url
++    )
++    
++    # Create Git config
++    git_config = GitConfig(
++        repo_path=project_dir,
++        remote_url=remote_url or os.getenv("GIT_REMOTE"),
++        auth_token=auth_token or os.getenv("GITHUB_TOKEN")
++    )
++    
++    # Initialize Git manager
++    git_manager = GitManager(config=git_config)
++    
++    # Initialize and return FileMemory
++    file_memory_config = FileMemoryConfig(
++        project_dir=project_dir,
++        git_manager=git_manager,
++        ai_config=ai_config,
++        log_manager=None  # Explicitly set to None as per requirements
++    )
++    
++    return FileMemory(config=file_memory_config)
++
++
++def main():
++    """Command line interface for FileMemory client."""
++    # Load environment variables
++    load_dotenv()
++    
++    # Parse command line arguments
++    parser = argparse.ArgumentParser(description="FileMemory Client - Update file descriptions for a project")
++    parser.add_argument("-d", "--directory", default=".", help="Project directory path (default: current directory)")
++    parser.add_argument("-m", "--model", default="gpt-4o", help="AI model name (default: gpt-4o)")
++    parser.add_argument("-t", "--temperature", type=float, default=0.7, help="AI temperature (default: 0.7)")
++    parser.add_argument("-l", "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="Logging level")
++    parser.add_argument("--failed-only", action="store_true", help="Process only previously failed files")
++    args = parser.parse_args()
++    
++    # Setup logging
++    setup_logging(log_level=getattr(logging, args.log_level))
++    
++    # Get absolute path for project directory
++    project_dir = os.path.abspath(args.directory)
++    if not os.path.isdir(project_dir):
++        logger.error(f"Project directory does not exist: {project_dir}")
++        sys.exit(1)
++    
++    logger.info(f"Initializing FileMemory for project: {project_dir}")
++    
++    # Initialize FileMemory
++    file_memory = initialize_file_memory(
++        project_dir=project_dir,
++        model_name=args.model,
++        temperature=args.temperature
++    )
++    
++    # Update file details or process failed files
++    if args.failed_only:
++        file_memory.process_failed_files()
++    else:
++        file_memory.update_file_details()
++
++
++if __name__ == "__main__":
++    import logging
++    main()
+```
+
+Now, let's also create a simple Python module that can be imported and used programmatically:
+
+```diff
+--- /dev/null
++++ client/file_memory_api.py
+@@ -0,0 +1,91 @@
++"""
++File Memory API
++
++Provides programmable API functions for using FileMemory without LogManager.
++"""
++
++import os
++from typing import Dict, List, Optional
++
++from dotenv import load_dotenv
++
++from core.ai import AIConfig
++from core.file_memory import FileMemory, FileMemoryConfig
++from core.git_manager import GitManager, GitConfig
++
++
++def init_file_memory(
++    project_dir: str,
++    model_name: str = "gpt-4o",
++    temperature: float = 0.7,
++    api_key: Optional[str] = None,
++    base_url: Optional[str] = None,
++    remote_url: Optional[str] = None,
++    auth_token: Optional[str] = None,
++) -> FileMemory:
++    """
++    Initialize a FileMemory instance with GitManager (no LogManager).
++    
++    Args:
++        project_dir: Path to the project directory
++        model_name: AI model to use for generating file descriptions
++        temperature: Temperature setting for AI responses
++        api_key: API key for AI service (will use env var if None)
++        base_url: Base URL for AI service (will use default if None)
++        remote_url: Git remote URL (will use env var if None)
++        auth_token: Git authentication token (will use env var if None)
++        
++    Returns:
++        Initialized FileMemory instance
++    """
++    # Load environment variables if not already loaded
++    load_dotenv()
++    
++    # Create AI config
++    ai_config = AIConfig(
++        model_name=model_name,
++        temperature=temperature,
++        api_key=api_key,
++        base_url=base_url
++    )
++    
++    # Create Git config
++    git_config = GitConfig(
++        repo_path=project_dir,
++        remote_url=remote_url or os.getenv("GIT_REMOTE"),
++        auth_token=auth_token or os.getenv("GITHUB_TOKEN")
++    )
++    
++    # Initialize Git manager
++    git_manager = GitManager(config=git_config)
++    
++    # Initialize and return FileMemory
++    file_memory_config = FileMemoryConfig(
++        project_dir=project_dir,
++        git_manager=git_manager,
++        ai_config=ai_config,
++        log_manager=None  # Explicitly None as per requirements
++    )
++    
++    return FileMemory(config=file_memory_config)
++
++
++def update_file_descriptions(file_memory: FileMemory) -> None:
++    """
++    Update file descriptions using the given FileMemory instance.
++    
++    Args:
++        file_memory: Initialized FileMemory instance
++    """
++    file_memory.update_file_details()
++
++
++def process_failed_files(file_memory: FileMemory) -> Dict[str, str]:
++    """
++    Process previously failed files to generate their descriptions.
++    
++    Args:
++        file_memory: Initialized FileMemory instance
++        
++    Returns:
++        Dictionary mapping file paths to their descriptions
++    """
++    return file_memory.process_failed_files()
+```
+
+Let's also create a simple example that demonstrates how to use our new API:
+
+```diff
+--- /dev/null
++++ examples/example_file_memory_client.py
+@@ -0,0 +1,44 @@
++"""
++Example demonstrating how to use the FileMemory client without LogManager.
++
++This example shows how to:
++1. Initialize FileMemory with only GitManager
++2. Update file descriptions
++3. Process previously failed files
++"""
++
++import os
++import logging
++from pathlib import Path
++
++from dotenv import load_dotenv
++
++from client.file_memory_api import init_file_memory, update_file_descriptions, process_failed_files
++from core.log_config import setup_logging
++
++
++def main():
++    # Setup logging
++    setup_logging(log_level=logging.INFO)
++    
++    # Load environment variables
++    load_dotenv()
++    
++    # Set project directory (this example uses the parent directory of this file)
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
++    
++    print(f"Initializing FileMemory for project: {project_dir}")
++    
++    # Initialize FileMemory using only GitManager (no LogManager)
++    file_memory = init_file_memory(
++        project_dir=project_dir,
++        model_name="gpt-4o",
++        temperature=0.7
++    )
++    
++    # Update file descriptions
++    print("Updating file descriptions...")
++    update_file_descriptions(file_memory)
++    
++
++if __name__ == "__main__":
++    main()
+```
+
+Let's update the requirements.txt file to include all necessary dependencies:
+
+```diff
+--- /dev/null
++++ requirements.txt
+@@ -0,0 +1,7 @@
++python-dotenv>=1.0.0
++langchain>=0.1.0
++gitpython>=3.1.30
++openai>=1.3.0
++PyGithub>=2.0.0
++dataclasses-json>=0.5.7
++typing-extensions>=4.7.0
+```
+
+Now let's update the `client/__init__.py` file to include our new modules:
+
+```diff
+--- client/__init__.py
++++ client/__init__.py
+@@ -1 +1,3 @@
+ """Client package for running the WorkflowEngine from the terminal."""
++# Add exports for the new file memory client modules
++from client.file_memory_api import init_file_memory, update_file_descriptions, process_failed_files
+```
+
+This implementation provides:
+1. A command-line client (`file_memory_client.py`) that can be run directly to update file descriptions
+2. A programmatic API (`file_memory_api.py`) that can be imported and used in other Python scripts
+3. An example (`example_file_memory_client.py`) that demonstrates how to use the API
+4. Updates to the requirements.txt and __init__.py files
+
+The client specifically initializes FileMemory without LogManager, as required, and uses GitManager to track file changes and update descriptions. It provides both command-line and programmatic interfaces for flexibility.
+
+This concludes a fully working implementation.
+
+
+
+# 用户需求
+
+
+    在pyproject.toml中编写脚本执行的命令
+    

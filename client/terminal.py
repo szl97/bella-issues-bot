@@ -2,14 +2,14 @@
 Terminal entrypoint for the WorkflowEngine.
 Provides functionality to run the engine from terminal with command-line arguments.
 """
-import logging
 import os
-import sys 
+import sys
+
 from dotenv import load_dotenv
 
-from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
 from client.cli import parse_args, get_requirement_text, build_config_from_args
 from core.log_config import setup_logging
+from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
 
 
 def run_workflow_from_terminal() -> str:
@@ -34,7 +34,7 @@ def run_workflow_from_terminal() -> str:
     # Try to get API key from environment if not provided as argument
     if "api_key" not in config_params and os.environ.get("OPENAI_API_KEY"):
         config_params["api_key"] = os.environ.get("OPENAI_API_KEY")
-        
+    
     # Create the workflow engine config
     config = WorkflowEngineConfig(**config_params)
     
@@ -50,5 +50,6 @@ def run_workflow_from_terminal() -> str:
 
 
 if __name__ == "__main__":
-    setup_logging(log_level=logging.INFO)
+    setup_logging()
     response = run_workflow_from_terminal()
+

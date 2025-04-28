@@ -1,5 +1,0 @@
-core/git_manager.py
-core/version_manager.py
-core/log_manager.py
-core/diff.py
-core/workflow_engine.py
