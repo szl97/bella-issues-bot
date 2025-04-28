@@ -59,7 +59,7 @@ class WorkflowEngine:
         if config.mode == "bot":
             # 创建临时目录作为工作区
             self.temp_dir = os.path.join(
-                tempfile.gettempdir(), 
+                tempfile.gettempdir(),
                 f"bella-bot-{config.issue_id}-{str(uuid.uuid4())[:8]}"
             )
             os.makedirs(self.temp_dir, exist_ok=True)

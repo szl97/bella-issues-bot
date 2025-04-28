@@ -633,19 +633,15 @@ class GitManager:
                 if remote_issue_branch in branch:
                     branch_exists = True
                     break
-                    
+
             if branch_exists:
                 # 切换到issue分支
                 self.switch_branch(issue_branch_name, create=True)
                 self.pull()
-                logger.info(f"成功切换到issue #{issue_id}的分支: {issue_branch_name}")
             else:
-                # 如果没有找到相关分支，切换到默认分支
-                self.switch_branch(self.config.default_branch)
                 self.pull()
-                logger.info(f"重置到远程分支: {self.config.remote_name}/{self.config.default_branch}")
-                self.repo.git.reset(f"{self.config.remote_name}/{self.config.default_branch}", hard=True)
-                logger.info(f"未找到issue #{issue_id}的分支，已切换到默认分支: {self.config.default_branch}")
+                self.switch_branch(issue_branch_name, create=True)
+            logger.info(f"成功切换到issue #{issue_id}的分支: {issue_branch_name}")
             
             return issue_branch_name
         except git.GitCommandError as e:

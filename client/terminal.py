@@ -13,7 +13,7 @@ from core.log_config import setup_logging
 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
 
 
-def run_workflow_from_terminal() -> str:
+def run_workflow_from_terminal() -> None:
     """
     Main entry point for running the workflow engine from terminal.
     Parses command line arguments and runs the workflow engine.
@@ -43,14 +43,7 @@ def run_workflow_from_terminal() -> str:
     
     # Initialize and run the workflow engine
     engine = WorkflowEngine(config)
-    response = engine.process_requirement(requirement)
-    
-    # Print the response to the terminal if available
-    if response:
-        print(f"\nResponse:\n{response}")
-    
-    return response if response else ""
-
+    engine.process_requirement(requirement)
 
 if __name__ == "__main__":
     response = run_workflow_from_terminal()
