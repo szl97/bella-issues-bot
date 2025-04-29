@@ -102,7 +102,8 @@ bella-issues-bot 支持多种配置方式：
 
 ### 项目配置文件
 
-- `.eng/config.json`: 可选的项目级配置文件
+
+- `.eng/system.txt`: 配置代码工程师的提示词
 - `.eng/.engignore`: 类似于 `.gitignore`，用于指定文件记忆系统应忽略的文件
 
 示例 `.engignore` 文件:
