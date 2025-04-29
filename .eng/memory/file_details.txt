@@ -1,4 +1,4 @@
-README.md:项目说明文档，详细介绍bella-issues-bot的功能、工作模式和使用方法。描述了个人开发助手和GitHub自动化两种模式，记忆系统的三个核心组件，以及安装配置指南、使用示例和项目结构说明。
+README.md:项目主文档，详细介绍bella-issues-bot这款基于AI的代码开发助手。说明了两种工作模式：个人开发助手和GitHub自动化模式。描述了记忆系统的三大组件（LogManager、VersionManager和FileMemory），并提供了安装、配置和使用指南。
 client/README.md:WorkflowEngine客户端文档，详细介绍了系统的记忆与上下文管理机制（日志管理、版本管理、文件记忆），支持的工作模式（客户端和机器人模式），以及命令行和编程API的使用方法和配置选项。
 client/README_FILE_MEMORY.md:FileMemory客户端文档，详细介绍了bella-issues-bot的文件记忆系统组件，包括其功能特点、安装方法、使用方式、工作原理和配置选项。核心功能是维护项目文件的功能描述，支持命令行和编程方式使用，能够智能增量更新文件描述。
 client/README_GITHUB_WORKFLOWS.md:该文档说明bella-issues-bot的GitHub工作流生成器功能，包括两个主要工作流：记忆初始化工作流（分析项目文件并生成描述）和Issue处理工作流（处理Issue需求并自动实现代码）。文档详细介绍了这些工作流的触发条件和功能。
