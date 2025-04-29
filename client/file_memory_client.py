@@ -26,6 +26,7 @@ logger = get_logger(__name__)
 
 def initialize_file_memory(
     project_dir: str,
+    base_branch: str = "main",
     model_name: str = "gpt-4o",
     temperature: float = 0.7,
     api_key: Optional[str] = None,
@@ -59,6 +60,7 @@ def initialize_file_memory(
     # Create Git config
     git_config = GitConfig(
         repo_path=project_dir,
+        default_branch=base_branch,
         remote_url=remote_url or os.getenv("GIT_REMOTE_URL"),
         auth_token=auth_token or os.getenv("GITHUB_TOKEN")
     )
@@ -110,6 +112,7 @@ def main() -> None:
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="FileMemory Client - Update file descriptions for a project")
+    parser.add_argument("--base-branch", "-b", type=str, default="main", help="Base branch for pull requests (default: main)")
     parser.add_argument("-d", "--directory", default=".", help="Project directory path (default: current directory)")
     parser.add_argument("-m", "--model", default="gpt-4o", help="AI model name (default: gpt-4o)")
     parser.add_argument("-t", "--temperature", type=float, default=0.7, help="AI temperature (default: 0.7)")
@@ -141,6 +144,7 @@ def main() -> None:
         # Initialize FileMemory
         file_memory = initialize_file_memory(
             project_dir=project_dir,
+            base_branch=args.base_branch,
             model_name=args.model,
             temperature=args.temperature,
             api_key=args.api_key,

@@ -133,6 +133,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="GitHub authentication token"
     )
+    parser.add_argument(
+        "--base-branch",
+        "-b",
+        type=str,
+        default="main",
+        help="Base branch for pull requests (default: main)"
+    )
 
     parser.add_argument(
         "-l",
@@ -187,8 +194,8 @@ def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         "core_template": core_temperature,  # Note: using template to match original param name
         "data_template": data_temperature,  # Note: using template to match original param name
         "max_retry": args.max_retry, 
-        "default_branch": args.default_branch,
-        "mode": args.mode,
+        "default_branch": args.base_branch,
+        "mode": args.mode
     }
     
     # Add optional parameters if they're specified

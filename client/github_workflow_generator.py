@@ -64,7 +64,7 @@ jobs:
           GIT_REMOTE: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}
           GITHUB_TOKEN: ${{{{ secrets.GIT_TOKEN }}}}
         run: |
-          bella-file-memory --mode bot -m {model} -t {temperature} --git-url "${{{{ github.server_url }}}}/${{{{ github.repository }}}}" --git-token "${{{{ secrets.GIT_TOKEN }}}}" -u "${{{{ secrets.OPENAI_API_BASE }}}}" -k "${{{{ secrets.OPENAI_API_KEY }}}}"
+          bella-file-memory --mode bot -b {branch} -m {model} -t {temperature} --git-url "${{{{ github.server_url }}}}/${{{{ github.repository }}}}" --git-token "${{{{ secrets.GIT_TOKEN }}}}" -u "${{{{ secrets.OPENAI_API_BASE }}}}" -k "${{{{ secrets.OPENAI_API_KEY }}}}"
 """
 
 # Template for issue processing workflow
@@ -123,7 +123,7 @@ jobs:
           ISSUE_ID: ${{{{ steps.issue.outputs.issue_id }}}}
         run: |
           # Run bella-issues-bot in bot mode - it will handle branch creation and pushing
-          bella-issues-bot --mode bot --issue-id ${{{{ steps.issue.outputs.issue_id }}}} --core-model {core_model} --data-model {data_model} --core-temperature {core_temperature} --data-temperature {data_temperature} --requirement "${{{{ steps.issue.outputs.requirement }}}}" --git-url "${{{{ github.server_url }}}}/${{{{ github.repository }}}}" --git-token "${{{{ secrets.GIT_TOKEN }}}}" -u "${{{{ secrets.OPENAI_API_BASE }}}}" -k "${{{{ secrets.OPENAI_API_KEY }}}}"
+          bella-issues-bot --mode bot -b {base_branch} --issue-id ${{{{ steps.issue.outputs.issue_id }}}} --core-model {core_model} --data-model {data_model} --core-temperature {core_temperature} --data-temperature {data_temperature} --requirement "${{{{ steps.issue.outputs.requirement }}}}" --git-url "${{{{ github.server_url }}}}/${{{{ github.repository }}}}" --git-token "${{{{ secrets.GIT_TOKEN }}}}" -u "${{{{ secrets.OPENAI_API_BASE }}}}" -k "${{{{ secrets.OPENAI_API_KEY }}}}"
 """
 
 def generate_workflow_files(
