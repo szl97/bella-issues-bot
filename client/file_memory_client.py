@@ -12,7 +12,7 @@ import shutil
 import sys
 import tempfile
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from dotenv import load_dotenv
 
@@ -157,11 +157,11 @@ def main() -> None:
         else:
             update_file_descriptions(file_memory)
             logger.info("Updated descriptions files")
-
-        file_memory.git_manager.commit("Update file memory [skip ci]", add_all=False, files=[".eng/memory/file_details.txt", ".eng/memory/git_id"])
-        file_memory.git_manager.pull()
-        file_memory.git_manager.push()
-        file_memory.git_manager.delete_local_repository()
+        if args.mode == "bot":
+            file_memory.git_manager.commit("Update file memory [skip ci]", add_all=False, files=[".eng/memory/file_details.txt", ".eng/memory/git_id"])
+            file_memory.git_manager.pull()
+            file_memory.git_manager.push()
+            file_memory.git_manager.delete_local_repository()
     finally:
         if args.mode == "bot":
             # 删除临时目录

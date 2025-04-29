@@ -1,9 +1,9 @@
 import json
+import logging
 import os
 import time
-import datetime
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Set
 
 from dotenv import load_dotenv
 from langchain.tools import Tool
@@ -11,8 +11,8 @@ from langchain.tools import Tool
 from core.ai import AIAssistant, AIConfig
 from core.file_fetcher import FileFetcher
 from core.git_manager import GitManager, GitConfig
+from core.log_config import get_logger, setup_logging
 from core.log_manager import LogManager
-from core.log_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -41,7 +41,7 @@ class FileMemory:
     RETRY_DELAY = 30    # 重试延迟（秒）
     # 每批次最大行数和字符数限制
     MAX_LINES_PER_BATCH = 10000  # 最大行数
-    MAX_CHARS_PER_BATCH = 50000  # 最大字符数，约为 100KB
+    MAX_CHARS_PER_BATCH = 50000  # 最大字符数，约为 50KB
     MAX_FILES_PER_BATCH = 20  # 每批次最多处理的文件数
 
     def __init__(self, config: FileMemoryConfig):
@@ -496,11 +496,13 @@ class FileMemory:
             return {}
 
 if __name__ == "__main__":
+    setup_logging(log_level=logging.DEBUG)
     load_dotenv()
     project_dir = "../."
     memory = FileMemory(
         FileMemoryConfig(
-            ai_config=AIConfig(temperature=1, model_name="claude-3.7-sonnet"),
+            project_dir=project_dir,
+            ai_config=AIConfig(temperature=1, model_name="coder-model"),
             git_manager=GitManager(config=GitConfig(repo_path=project_dir)),
             log_manager=None
         )

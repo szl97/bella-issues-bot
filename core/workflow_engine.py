@@ -114,7 +114,7 @@ class WorkflowEngine:
         self.file_memory = FileMemory(
             config=FileMemoryConfig(
                 git_manager=self.git_manager,
-                ai_config=self.core_ai_config,
+                ai_config=self.data_ai_config,
                 project_dir=self.project_dir,
                 log_manager=self.log_manager
             )

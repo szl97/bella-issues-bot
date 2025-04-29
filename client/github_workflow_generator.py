@@ -173,8 +173,8 @@ def generate_workflow_files(
     memory_workflow_path = os.path.join(workflows_dir, "memory_init.yml")
     memory_workflow_content = MEMORY_INIT_TEMPLATE.format(
         branch=base_branch,
-        model=actual_core_model,
-        temperature=temperature,
+        model=actual_data_model,
+        temperature=actual_data_temp,
         package_version=package_version
     )
     

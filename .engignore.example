@@ -11,6 +11,10 @@ dist/
 tmp/
 .cache/
 
+# 忽略锁定配置
+*lock.json
+*.lock
+
 # 忽略测试文件
 test_*.py
 *_test.py
@@ -22,3 +26,10 @@ test_*.py
 #必须配置
 .git/
 .eng/
+.git/
+.eng/
+.github/
+.gitignore
+LICENSE
+
+
