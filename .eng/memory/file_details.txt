@@ -1,4 +1,4 @@
-README.md:项目说明文档，介绍bella-issues-bot的功能、工作模式和使用方法。详细说明了个人开发助手模式和GitHub自动化模式，以及记忆系统的工作原理、安装配置方法和使用示例。
+README.md:项目说明文档，详细介绍bella-issues-bot的功能、工作模式和使用方法。描述了个人开发助手和GitHub自动化两种模式，记忆系统的三个核心组件，以及安装配置指南、使用示例和项目结构说明。
 client/README.md:WorkflowEngine客户端文档，详细介绍了系统的记忆与上下文管理机制（日志管理、版本管理、文件记忆），支持的工作模式（客户端和机器人模式），以及命令行和编程API的使用方法和配置选项。
 client/README_FILE_MEMORY.md:FileMemory客户端文档，详细介绍了bella-issues-bot的文件记忆系统组件，包括其功能特点、安装方法、使用方式、工作原理和配置选项。核心功能是维护项目文件的功能描述，支持命令行和编程方式使用，能够智能增量更新文件描述。
 client/README_GITHUB_WORKFLOWS.md:该文档说明bella-issues-bot的GitHub工作流生成器功能，包括两个主要工作流：记忆初始化工作流（分析项目文件并生成描述）和Issue处理工作流（处理Issue需求并自动实现代码）。文档详细介绍了这些工作流的触发条件和功能。
@@ -11,7 +11,7 @@ client/runner.py:WorkflowEngine的编程API，提供在Python脚本中使用的�
 client/terminal.py:终端客户端入口模块，提供命令行接口启动工作流引擎。解析命令行参数、加载环境变量、构建配置并初始化WorkflowEngine处理用户需求。
 core/ai.py:AI助手模块，负责与AI模型交互。包含AIAssistant类和AIConfig数据类，封装了模型调用、工具集成和响应生成功能，支持流式输出。
 core/chat_processor.py:聊天处理模块，处理非代码修改类的用户交互。ChatProcessor类利用AI能力处理用户问题，提供有针对性回答，并记录聊天历史。
-core/code_engineer.py:代码工程师模块，处理代码生成需求。CodeEngineer类负责与AI模型交互，解析diff并应用到文件系统，跟踪修改和失败文件，支持重试机制。
+core/code_engineer.py:实现代码工程师核心功能，负责处理用户prompt并生成代码修改。包含CodeEngineer类，通过AI模型分析需求、生成代码diff并应用修改。具有系统提示词管理、错误处理和日志记录功能，与AI助手、Diff处理器和日志管理器交互。
 core/decision.py:决策环境模块，用于分析用户需求类型并确定处理流程。包含DecisionProcess类和DecisionResult数据类，能够判断需求是否需要修改代码，为AI助手提供决策工具。
 core/diff.py:处理Git diff格式的工具类。提供从文本中解析diff信息、应用diff修改的功能，使用AI模型生成修改后文件内容。包含Diff类和DiffInfo数据类，支持文件创建、修改和删除操作。
 core/file_fetcher.py:文件获取工具，提供FileFetcher类用于获取项目中的所有文件，支持.gitignore模式过滤，为代码分析和处理提供文件集合。
@@ -30,7 +30,7 @@ examples/example_code_generate.py:代码生成流程示例，展示如何使用C
 examples/example_file_memory_client.py:示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
-pyproject.toml:项目配置文件，定义了bella-issues-bot的元数据、依赖项和构建设置。包含版本信息(0.1.12)、项目描述、作者信息、许可证和依赖库列表。还配置了三个命令行入口点和代码质量工具(ruff、black)的设置。
+pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖项和工具配置。包含poetry构建信息、Python依赖项、命令行入口点以及代码格式化工具配置。作为项目的核心配置文件，指定了包含的模块和支持的Python版本。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
 scripts/init_file_memory.sh:一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
 scripts/run_bot.sh:启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
