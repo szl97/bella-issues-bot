@@ -1,12 +1,12 @@
 README.md:bella-issues-bot项目的主要说明文档，介绍了这个基于AI的代码开发助手工具。描述了两种工作模式：个人开发助手和GitHub自动化模式。详细说明了项目的主要功能、记忆系统（包括日志管理、版本管理和文件记忆），以及安装方法、配置选项和使用示例。
 client/README.md:WorkflowEngine客户端文档，详细介绍了系统的记忆与上下文管理机制（日志管理、版本管理、文件记忆），支持的工作模式（客户端和机器人模式），以及命令行和编程API的使用方法和配置选项。
-client/README_FILE_MEMORY.md:FileMemory客户端文档，详细介绍了bella-issues-bot的文件记忆系统组件，包括其功能特点、安装方法、使用方式、工作原理和配置选项。核心功能是维护项目文件的功能描述，支持命令行和编程方式使用，能够智能增量更新文件描述。
-client/README_GITHUB_WORKFLOWS.md:该文档说明bella-issues-bot的GitHub工作流生成器功能，包括两个主要工作流：记忆初始化工作流（分析项目文件并生成描述）和Issue处理工作流（处理Issue需求并自动实现代码）。文档详细介绍了这些工作流的触发条件和功能。
+client/README_FILE_MEMORY.md:FileMemory客户端文档，详细介绍了文件记忆系统的功能、特点、使用方法和工作原理。说明如何通过命令行或编程方式使用FileMemory维护项目文件的功能描述，包含配置选项、最佳实践和故障排除指南。
+client/README_GITHUB_WORKFLOWS.md:GitHub工作流生成器文档，详细介绍了如何使用bella-issues-bot自动生成GitHub Actions工作流配置。包含功能概述、命令行参数、工作流文件详解、配置要求、使用场景和自定义方法等内容。
 client/__init__.py:Client包的初始化文件，用于从终端运行WorkflowEngine。导出了file_memory_client模块中的initialize_file_memory、update_file_descriptions和process_failed_files函数供编程使用。
 client/cli.py:WorkflowEngine的命令行接口，提供解析命令行参数并运行引擎的功能。包含parse_args、get_requirement_text和build_config_from_args函数，支持配置项目路径、问题ID、模型参数、温度设置和操作模式等选项。
 client/file_memory_api.py:文件记忆API模块，提供在不使用LogManager的情况下编程使用FileMemory的函数。包含初始化文件记忆、更新文件描述和处理失败文件的功能。
-client/file_memory_client.py:文件内存客户端，用于初始化和管理FileMemory，仅依赖GitManager。提供命令行和编程接口更新文件描述。主要函数包括initialize_file_memory和update_file_descriptions，支持bot和client两种运行模式。
-client/github_workflow_generator.py:GitHub工作流生成器，用于创建集成bella-issues-bot的GitHub Actions工作流文件。提供两个工作流：文件内存初始化和问题处理机器人。包含generate_workflow_files主函数，能根据用户配置自动生成YAML工作流文件。
+client/file_memory_client.py:FileMemory客户端实现，提供独立的命令行和编程接口来初始化和管理文件记忆系统。包含initialize_file_memory、update_file_descriptions和process_failed_files等核心函数，支持命令行参数配置和环境变量读取。
+client/github_workflow_generator.py:GitHub工作流生成器模块，用于创建GitHub Actions工作流文件，实现bella-issues-bot与GitHub的集成。提供generate_workflow_files函数和命令行接口，可生成文件记忆初始化和Issue处理两种工作流配置文件。
 client/runner.py:WorkflowEngine的编程API，提供在Python脚本中使用的简化接口。包含run_workflow函数，支持统一的模型和温度设置，以及各种配置选项。
 client/terminal.py:终端客户端入口模块，提供命令行接口启动工作流引擎。解析命令行参数、加载环境变量、构建配置并初始化WorkflowEngine处理用户需求。
 core/ai.py:AI助手模块，负责与AI模型交互。包含AIAssistant类和AIConfig数据类，封装了模型调用、工具集成和响应生成功能，支持流式输出。
@@ -30,7 +30,7 @@ examples/example_code_generate.py:代码生成流程示例，展示如何使用C
 examples/example_file_memory_client.py:示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
-pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖项和工具配置。包含poetry构建信息、Python依赖项、命令行入口点以及代码格式化工具配置。作为项目的核心配置文件，指定了包含的模块和支持的Python版本。
+pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖、构建设置和工具配置。包含项目版本、描述、依赖包列表、命令行入口点以及代码格式化工具(ruff和black)的配置。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
 scripts/init_file_memory.sh:一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
 scripts/run_bot.sh:启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
