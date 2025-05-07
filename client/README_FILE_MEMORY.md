@@ -162,6 +162,7 @@ on:
 jobs:
   update-memory:
     runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, '[skip memory]') || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -181,7 +182,7 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add .eng/memory/
-          git commit -m "Update file memory [skip ci]" || echo "No changes to commit"
+          git commit -m "Update file memory [skip memory]" || echo "No changes to commit"
           git push
 ```
 

@@ -14,18 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    if: ${{ !contains(github.event.head_commit.message, '[skip memory]') || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
           
-      - name: Check if commit is from automation
-        id: check_commit
-        run: |
-          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
-          echo "is_bot_commit=$(echo $COMMIT_MSG | grep -q 'Update file memory [skip ci]' && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -37,7 +32,6 @@ jobs:
           pip install bella-issues-bot
 
       - name: Initialize file memory
-        if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.force_run == 'true') || (steps.check_commit.outputs.is_bot_commit == 'false') }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}

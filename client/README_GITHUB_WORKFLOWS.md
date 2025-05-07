@@ -56,7 +56,7 @@ bella-github-workflows --model gpt-4o --temperature 0.5
 3. 设置Python环境
 4. 安装bella-issues-bot
 5. 初始化文件记忆系统，生成项目文件描述
-6. 将生成的记忆文件提交回仓库（提交信息带有[skip ci]标记）
+6. 将生成的记忆文件提交回仓库（提交信息带有[skip memory]标记）
 
 ### Issue处理工作流 (`issue_process.yml`)
 
@@ -110,30 +110,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    if: ${{ !contains(github.event.head_commit.message, '[skip memory]') || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          
-      - name: 检查是否为自动提交
-        id: check_commit
-        run: |
-          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
-          echo "is_bot_commit=$(echo $COMMIT_MSG | grep -q 'Update file memory [skip ci]' && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
 
       - name: 设置Python环境
-        if: ${{ steps.check_commit.outputs.is_bot_commit == 'false' || github.event.inputs.force_run == 'true' }}
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
           
       - name: 安装依赖
-        if: ${{ steps.check_commit.outputs.is_bot_commit == 'false' || github.event.inputs.force_run == 'true' }}
         run: pip install bella-issues-bot
         
       - name: 初始化文件记忆
-        if: ${{ steps.check_commit.outputs.is_bot_commit == 'false' || github.event.inputs.force_run == 'true' }}
         env:
            OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
            OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
