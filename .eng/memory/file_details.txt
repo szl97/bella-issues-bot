@@ -13,7 +13,7 @@ client/terminal.py:终端客户端入口模块，提供命令行接口启动工�
 core/ai.py:AI助手模块，负责与AI模型交互。包含AIAssistant类和AIConfig数据类，封装了模型调用、工具集成和响应生成功能，支持流式输出。
 core/chat_processor.py:聊天处理模块，处理非代码修改类的用户交互。ChatProcessor类利用AI能力处理用户问题，提供有针对性回答，并记录聊天历史。
 core/code_engineer.py:实现代码工程师核心功能，负责处理用户prompt并生成代码修改。包含CodeEngineer类，通过AI模型分析需求、生成代码diff并应用修改。具有系统提示词管理、错误处理和日志记录功能，与AI助手、Diff处理器和日志管理器交互。
-core/decision.py:决策环境模块，用于分析用户需求类型并确定处理流程。包含DecisionProcess类和DecisionResult数据类，能够判断需求是否需要修改代码，为AI助手提供决策工具。
+core/decision.py:决策环境模块，用于分析用户需求类型并确定处理流程。包含DecisionProcess类和DecisionResult数据类，通过AI助手判断用户需求是否需要修改代码，并决定使用代码修改流程还是对话流程。与版本管理器(VersionManager)和AI助手(AIAssistant)交互。
 core/diff.py:处理Git diff格式的工具类。提供从文本中解析diff信息、应用diff修改的功能，使用AI模型生成修改后文件内容。包含Diff类和DiffInfo数据类，支持文件创建、修改和删除操作。
 core/file_fetcher.py:文件获取工具，提供FileFetcher类用于获取项目中的所有文件，支持.gitignore模式过滤，为代码分析和处理提供文件集合。
 core/file_memory.py:文件记忆系统实现，管理项目文件描述。FileMemory类负责生成、存储和更新文件描述，支持批量处理、增量更新和失败重试，与Git和LogManager交互获取变更信息。
@@ -31,7 +31,7 @@ examples/example_code_generate.py:代码生成流程示例，展示如何使用C
 examples/example_file_memory_client.py:示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
-pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖、构建设置和工具配置。包含项目版本、描述、依赖包列表、命令行入口点以及代码格式化工具(ruff和black)的配置。
+pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖项和工具配置。包含项目版本(0.1.17)、依赖库列表、命令行入口点和代码检查工具配置。该文件是Poetry包管理工具使用的主要配置文件。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
 scripts/init_file_memory.sh:一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
 scripts/run_bot.sh:启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
