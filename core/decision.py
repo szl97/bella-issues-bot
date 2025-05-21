@@ -55,14 +55,6 @@ class DecisionProcess:
         Returns:
             DecisionResult: 决策结果
         """
-        # 只有当轮次大于1时，才需要进行决策分析
-        if self.version_manager.current_round_num <= 1:
-            # 首轮默认是代码修改需求
-            return DecisionResult(
-                needs_code_modification=True,
-                reasoning="首轮交互默认为代码修改需求"
-            )
-
         # 获取历史上下文
         history_context = self.version_manager.get_formatted_history()
         
