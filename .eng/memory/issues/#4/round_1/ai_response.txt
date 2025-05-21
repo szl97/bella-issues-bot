@@ -1,0 +1,108 @@
+# 在GitHub中使用bella-issues-bot的操作指南
+
+要在GitHub中使用bella-issues-bot项目，您需要执行以下操作：
+
+## 1. 安装项目
+
+您可以通过两种方式安装bella-issues-bot：
+
+```bash
+# 通过pip安装
+pip install bella-issues-bot
+
+# 或从源码安装
+git clone https://github.com/szl97/bella-issues-bot.git
+cd bella-issues-bot
+pip install -e .
+```
+
+## 2. 设置必要的环境变量
+
+```bash
+# 必需的环境变量
+export OPENAI_API_KEY=your_api_key
+
+# 可选的环境变量（用于GitHub集成）
+export OPENAI_API_BASE=https://api.openai.com/v1  # 自定义API端点
+export GITHUB_REMOTE_URL=https://github.com/username/repo.git
+export GITHUB_TOKEN=your_github_token
+```
+
+## 3. 初始化文件记忆系统
+
+这一步让AI助手理解您的项目结构：
+
+```bash
+# 在项目根目录执行
+bella-file-memory --project-dir ./your-project
+```
+
+此命令会生成文件描述，存储在`.eng/memory/file_details.txt`中。
+
+## 4. 设置GitHub工作流（自动化模式）
+
+生成GitHub Actions工作流配置：
+
+```bash
+# 生成默认工作流配置
+bella-github-workflows
+
+# 自定义基础分支和模型
+bella-github-workflows --base-branch develop --model gpt-4o
+```
+
+这将在`.github/workflows/`目录中创建两个工作流文件：
+- `memory_init.yml` - 自动分析项目文件并维护文件记忆
+- `issue_process.yml` - 自动处理Issue中的需求
+
+## 5. 配置GitHub仓库权限
+
+1. 在GitHub仓库的**Settings > Secrets and variables > Actions**中添加：
+   - `OPENAI_API_KEY`（必需）
+   - `OPENAI_API_BASE`（可选）
+   - `GIT_TOKEN`（用于代码推送权限）
+
+2. 在**Settings > Actions > General > Workflow permissions**中：
+   - 选择"Read and write permissions"
+   - 勾选"Allow GitHub Actions to create and approve pull requests"
+
+## 6. 使用方式
+
+### a) 个人开发助手模式
+
+在命令行中直接使用AI助手：
+
+```bash
+# 基本使用 - 提出问题或请求代码修改
+bella-issues-bot --issue-id 123 --requirement "实现一个新的日志记录功能"
+
+# 自定义模型和温度
+bella-issues-bot --issue-id 123 --requirement "优化文件读取性能" --core-model gpt-4o --core-temperature 0.5
+```
+
+### b) GitHub自动化模式
+
+一旦配置好工作流，您可以：
+
+1. 创建新Issue描述您的需求
+2. AI助手会自动：
+   - 分析您的需求
+   - 在专用分支上实现代码
+   - 创建拉取请求
+   - 在Issue中回复处理结果
+
+## 7. 项目自定义配置（可选）
+
+创建以下配置文件：
+
+- `.eng/system.txt` - 自定义AI提示词
+- `.eng/.engignore` - 类似`.gitignore`，指定记忆系统应忽略的文件
+
+## 常见使用场景
+
+1. **自动化需求实现**：通过GitHub Issues提交需求，AI助手自动实现并提交代码
+2. **代码文档维护**：每次推送代码自动更新项目文件描述
+3. **技术问题解答**：在Issues中提问技术问题，获取AI自动回复
+4. **日常开发辅助**：使用命令行工具快速生成代码、解决技术问题
+
+这些步骤将帮助您充分利用bella-issues-bot的功能，提高开发效率并实现代码工作的部分自动化。
