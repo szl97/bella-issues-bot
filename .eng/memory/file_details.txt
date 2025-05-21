@@ -32,6 +32,7 @@ examples/example_file_memory_client.py:示例文件，演示如何在不使用Lo
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
 pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖项和工具配置。包含项目版本(0.1.17)、依赖库列表、命令行入口点和代码检查工具配置。该文件是Poetry包管理工具使用的主要配置文件。
+quick-start.md:bella-issues-bot项目的使用指南文档，详细介绍了项目的主要功能和使用方法，包括个人开发助手模式、GitHub工作流集成、Issue处理自动化、编程API使用方法和项目配置说明。文档展示了如何安装、初始化文件记忆系统和使用AI助手处理开发需求。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
 scripts/init_file_memory.sh:一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
 scripts/run_bot.sh:启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
