@@ -1,5 +1,6 @@
 LICENSE.md:Apache License 2.0 许可证文件，定义了软件使用、复制和分发的条款与条件。包含版权许可、专利许可、再分发条件、免责声明等九个主要章节，为开源项目提供法律保护框架。
-README.md:bella-issues-bot项目的主要说明文档，介绍了这个基于AI的代码开发助手工具。描述了两种工作模式：个人开发助手和GitHub自动化模式。详细说明了项目的主要功能、记忆系统（包括日志管理、版本管理和文件记忆），以及安装方法、配置选项和使用示例。
+README.en.md:bella-issues-bot项目的英文README文件，介绍了项目概览、核心功能、记忆系统架构（LogManager、VersionManager和FileMemory）、安装方法和配置选项。重点说明了项目的两种工作模式和三大记忆组件的工作原理。
+README.md:bella-issues-bot项目的中文README文件，详细介绍了项目简介、主要功能、记忆系统（日志管理、版本管理、文件记忆）、安装方法、配置选项和详细使用示例，还包含项目结构说明，全面展示了这个AI代码开发助手的功能和用法。
 client/README.md:WorkflowEngine客户端文档，详细介绍了系统的记忆与上下文管理机制（日志管理、版本管理、文件记忆），支持的工作模式（客户端和机器人模式），以及命令行和编程API的使用方法和配置选项。
 client/README_FILE_MEMORY.md:FileMemory客户端文档，详细介绍了文件记忆系统的功能、特点、使用方法和工作原理。说明如何通过命令行或编程方式使用FileMemory维护项目文件的功能描述，包含配置选项、最佳实践和故障排除指南。
 client/README_GITHUB_WORKFLOWS.md:GitHub工作流生成器文档，详细介绍了如何使用bella-issues-bot自动生成GitHub Actions工作流配置。包含功能概述、命令行参数、工作流文件详解、配置要求、使用场景和自定义方法等内容。
@@ -32,7 +33,8 @@ examples/example_file_memory_client.py:示例文件，演示如何在不使用Lo
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
 pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖项和工具配置。包含项目版本(0.1.17)、依赖库列表、命令行入口点和代码检查工具配置。该文件是Poetry包管理工具使用的主要配置文件。
-quick-start.md:bella-issues-bot项目的使用指南文档，详细介绍了项目的主要功能和使用方法，包括个人开发助手模式、GitHub工作流集成、Issue处理自动化、编程API使用方法和项目配置说明。文档展示了如何安装、初始化文件记忆系统和使用AI助手处理开发需求。
+quick-start.en.md:bella-issues-bot项目的英文快速入门指南，简洁地介绍了基本设置、常见使用场景（个人助手和GitHub集成）、文件记忆系统操作、配置方法以及最佳实践，帮助英文用户迅速掌握工具的核心功能。
+quick-start.md:bella-issues-bot项目的中文使用指南，详细介绍了个人开发助手模式和GitHub工作流集成的使用方法，包括安装步骤、文件记忆系统初始化、命令行参数和环境变量配置等内容，帮助用户快速上手该工具。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
 scripts/init_file_memory.sh:一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
 scripts/run_bot.sh:启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
