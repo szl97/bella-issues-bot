@@ -1,7 +1,9 @@
 # bella-issues-bot
 
-- [![Static Badge](https://img.shields.io/badge/doc-deepwiki-blue?style=flat-square)](https://deepwiki.com/szl97/bella-issues-bot)
-- [![Static Badge](https://img.shields.io/badge/support-BellaOpenAPI-%23C76300?style=flat-square)](https://github.com/LianjiaTech/bella-openapi)
+- [![Static Badge](https://img.shields.io/badge/deep-wiki-blue?style=flat-square)](https://deepwiki.com/bella-top/bella-issues-bot)
+- [![Static Badge](https://img.shields.io/badge/Bella-support-%23C76300?style=flat-square)](https://doc.bella.top/)
+
+中文 | [English](./README.en.md)
 
 ## 项目简介
 

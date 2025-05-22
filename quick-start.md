@@ -1,5 +1,7 @@
 # bella-issues-bot 使用指南
 
+中文 | [English](./quick-start.en.md)
+
 在GitHub上使用bella-issues-bot项目，您可以执行以下主要操作：
 
 ## 1. 作为个人开发助手
