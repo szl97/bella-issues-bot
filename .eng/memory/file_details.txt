@@ -17,7 +17,7 @@ core/code_engineer.py:实现代码工程师核心功能，负责处理用户prom
 core/decision.py:决策环境模块，用于分析用户需求类型并确定处理流程。包含DecisionProcess类和DecisionResult数据类，通过AI助手判断用户需求是否需要修改代码，并决定使用代码修改流程还是对话流程。与版本管理器(VersionManager)和AI助手(AIAssistant)交互。
 core/diff.py:处理Git diff格式的工具类。提供从文本中解析diff信息、应用diff修改的功能，使用AI模型生成修改后文件内容。包含Diff类和DiffInfo数据类，支持文件创建、修改和删除操作。
 core/file_fetcher.py:文件获取工具，提供FileFetcher类用于获取项目中的所有文件，支持.gitignore模式过滤，为代码分析和处理提供文件集合。
-core/file_memory.py:文件记忆管理模块，负责维护和更新代码文件的描述信息。包含FileMemory类和FileMemoryConfig配置类，通过AI生成文件描述，支持批量处理，跟踪文件变更，为其他组件提供文件上下文信息。
+core/file_memory.py:实现项目文件内容的记忆管理系统，主要包含FileMemory类，负责生成和维护文件描述。通过AI助手批量分析代码文件，支持Git变更追踪和LogManager集成，能够智能更新文件描述并处理失败文件。
 core/file_selector.py:实现基于AI的文件选择功能，通过分析需求自动确定相关文件。包含FileSelector类，提供select_files_for_requirement方法，使用AI助手和工具来智能筛选与特定功能相关的文件。与FileFetcher和FileMemory交互获取项目文件。
 core/git_manager.py:Git操作管理模块，封装了与Git仓库交互的功能。包含GitConfig和GitManager两个主要类，提供克隆、拉取、推送、分支管理等Git操作。支持GitHub认证、Issue评论添加，并能处理仓库路径、远程URL和认证令牌，与GitHub工作流集成。
 core/log_config.py:日志配置模块，提供统一的日志设置功能。实现了setup_logging和get_logger函数，配置彩色控制台输出和文件日志记录，支持日志轮换。
@@ -32,7 +32,7 @@ examples/example_code_generate.py:代码生成流程示例，展示如何使用C
 examples/example_file_memory_client.py:示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
-pyproject.toml:项目配置文件，定义了bella-issues-bot的基本信息、依赖项和工具配置。包含项目版本、描述、作者、依赖库列表、命令行入口点以及代码风格检查工具(ruff、black)的配置。
+pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖、脚本入口和代码风格规范。包含Poetry包管理配置、项目版本、依赖库列表以及代码格式化工具(ruff、black)的设置。
 quick-start.en.md:bella-issues-bot项目的英文快速入门指南，简洁地介绍了基本设置、常见使用场景（个人助手和GitHub集成）、文件记忆系统操作、配置方法以及最佳实践，帮助英文用户迅速掌握工具的核心功能。
 quick-start.md:bella-issues-bot项目的中文使用指南，详细介绍了个人开发助手模式和GitHub工作流集成的使用方法，包括安装步骤、文件记忆系统初始化、命令行参数和环境变量配置等内容，帮助用户快速上手该工具。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
