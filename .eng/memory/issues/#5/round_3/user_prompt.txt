@@ -1,0 +1,1557 @@
+# 项目文件描述
+
+
+- core/log_config.py: 日志配置模块，提供统一的日志设置功能。实现了setup_logging和get_logger函数，配置彩色控制台输出和文件日志记录，支持日志轮换。
+
+- core/log_manager.py: 管理代码生成日志的存储和检索。包含LogManager类，用于存档系统提示词、用户提示词、AI响应等内容，支持按issue和轮次组织日志。提供archive_logs和get_issue_log_entries等方法，记录代码生成过程。
+
+- core/ai.py: AI助手模块，负责与AI模型交互。包含AIAssistant类和AIConfig数据类，封装了模型调用、工具集成和响应生成功能，支持流式输出。
+
+- core/workflow_engine.py: 工作流引擎核心组件，协调版本管理、日志管理和AI交互。包含WorkflowEngine类和WorkflowEngineConfig配置类，负责处理用户需求，根据需求类型执行代码修改或聊天回复流程，是系统的核心协调器。
+
+- core/terminal.py: 无描述
+
+- client/terminal.py: 终端客户端入口模块，提供命令行接口启动工作流引擎。解析命令行参数、加载环境变量、构建配置并初始化WorkflowEngine处理用户需求。
+
+- pyproject.toml: 项目配置文件，定义了bella-issues-bot项目的元数据、依赖和工具配置。包含poetry构建配置、依赖包列表、命令行入口点以及代码格式化工具设置。为项目提供基础构建和开发环境配置。
+
+
+# 文件内容
+
+
+
+```
+File: core/log_config.py
+1 import logging
+2 import os
+3 import sys
+4 from logging.handlers import RotatingFileHandler
+5 
+6 import colorlog
+7 
+8 project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+9 def setup_logging(log_dir=f'{project_dir}/logs', log_level=logging.INFO, log_file='app.log'):
+10     """
+11     设置日志配置，使用 colorlog 实现彩色控制台输出
+12     
+13     Args:
+14         log_dir: 日志文件目录
+15         log_level: 日志级别
+16         log_file: 日志文件名
+17     
+18     Returns:
+19         logging.Logger: 配置好的根日志记录器
+20     """
+21     # 确保日志目录存在
+22     os.makedirs(log_dir, exist_ok=True)
+23     
+24     # 创建根日志记录器
+25     root_logger = logging.getLogger()
+26     root_logger.setLevel(log_level)
+27     
+28     # 清除现有处理器
+29     for handler in root_logger.handlers[:]:
+30         root_logger.removeHandler(handler)
+31     
+32     # 创建彩色控制台处理器
+33     console_handler = colorlog.StreamHandler(stream=sys.stdout)
+34     console_handler.setLevel(log_level)
+35     console_format = colorlog.ColoredFormatter(
+36         '%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+37         datefmt='%Y-%m-%d %H:%M:%S',
+38         log_colors={
+39             'DEBUG': 'cyan',
+40             'INFO': 'green',
+41             'WARNING': 'yellow',
+42             'ERROR': 'red',
+43             'CRITICAL': 'red,bg_white',
+44         }
+45     )
+46     console_handler.setFormatter(console_format)
+47     
+48     # 创建文件处理器（带日志轮换）
+49     log_file_path = os.path.join(log_dir, log_file)
+50     file_handler = RotatingFileHandler(
+51         log_file_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'
+52     )
+53     file_handler.setLevel(log_level)
+54     file_format = logging.Formatter(
+55         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+56         datefmt='%Y-%m-%d %H:%M:%S'
+57     )
+58     file_handler.setFormatter(file_format)
+59     
+60     # 添加处理器到根日志记录器
+61     root_logger.addHandler(console_handler)
+62     root_logger.addHandler(file_handler)
+63     
+64     # 返回根日志记录器
+65     return root_logger
+66 
+67 def get_logger(name, log_level=None):
+68     """
+69     获取指定名称的日志记录器
+70     
+71     Args:
+72         name: 日志记录器名称
+73         log_level: 日志级别，如果提供则覆盖默认级别
+74     
+75     Returns:
+76         logging.Logger: 指定名称的日志记录器
+77     """
+78     logger = logging.getLogger(name)
+79     if log_level is not None:
+80         logger.setLevel(log_level)
+81     return logger
+82 
+83 # 如果直接运行此模块，则设置日志并进行测试
+84 if __name__ == "__main__":
+85     setup_logging(log_level=logging.DEBUG)
+86     logger = get_logger(__name__)
+87     
+88     logger.debug("这是一条调试日志")
+89     logger.info("这是一条信息日志")
+90     logger.warning("这是一条警告日志")
+91     logger.error("这是一条错误日志")
+92     logger.critical("这是一条严重错误日志")
+93     
+94     print("\n日志配置测试完成，请检查控制台输出和logs目录下的日志文件。")
+```
+
+
+
+
+```
+File: core/log_manager.py
+1 import datetime
+2 import os
+3 import json
+4 import shutil
+5 from dataclasses import dataclass, field
+6 from typing import List, Optional
+7 from pydantic import BaseModel
+8 
+9 from core.diff import DiffInfo
+10 from core.log_config import get_logger
+11 
+12 logger = get_logger(__name__)
+13 
+14 @dataclass
+15 class LogConfig:
+16     """日志管理配置"""
+17 
+18     project_dir: str
+19     issue_id: int
+20     mode: str = "client" # ["client", "bot"]
+21 
+22 
+23 class LogEntry(BaseModel):
+24     """存储单次代码生成日志的数据类"""
+25     issue_id: int
+26     round_num: int
+27     sys_prompt: str
+28     prompt: str
+29     response: str
+30     timestamp: str = datetime.datetime.now().isoformat()
+31     log_path: str = ""
+32     modified_files: List[DiffInfo] = []
+33 
+34 
+35 class LogManager:
+36     """管理代码生成日志的存档和检索"""
+37     base_dir: str = ".eng"
+38     logs_base_dir: str = "memory"
+39     rollback_dir: str = "rollback"
+40 
+41     def __init__(self, config: LogConfig):
+42         """
+43         初始化日志管理器
+44 
+45         Args:
+46             config: LogConfig实例，包含必要的配置信息
+47         """
+48         self.config = config
+49         self.issue_id = self.config.issue_id
+50 
+51         
+52         # 根据模式选择存储目录
+53         if self.config.mode == "bot":
+54             logs_dir = "issues"
+55         else:
+56             logs_dir = "queries"
+57             
+58         # 构建完整的日志存储路径
+59         self.logs_path = os.path.join(
+60             self.config.project_dir, 
+61             self.base_dir,
+62             self.logs_base_dir,
+63             logs_dir)
+64         self.issues_path = os.path.join(
+65             self.logs_path, "#" + str(self.issue_id)
+66         )
+67 
+68         self.rollback_path = os.path.join(
+69             self.logs_path, "#" + str(self.issue_id), self.rollback_dir
+70         )
+71 
+72         # 初始化当前轮次
+73         self.current_round = self._get_next_round()
+74 
+75         # 确保必要的目录存在
+76         os.makedirs(self.issues_path, exist_ok=True)
+77         os.makedirs(self.rollback_path, exist_ok=True)
+78 
+79         # 定义日志文件名常量
+80         self.SYS_PROMPT_FILE = "system_prompt.txt"
+81         self.USER_PROMPT_FILE = "user_prompt.txt"
+82         self.AI_RESPONSE_FILE = "ai_response.txt"
+83         self.TIMESTAMP_FILE = "timestamp.txt"
+84         self.MODIFIED_FILES_FILE = "modified_files.txt"
+85 
+86     def archive_logs(self, sys_prompt: str, prompt: str, response: str, diff_infos: List[DiffInfo] = None) -> str:
+87         """
+88         将代码生成日志存档到指定的目录
+89 
+90         Args:
+91             diff_infos: 文件的修改信息
+92             sys_prompt: 系统提示词
+93             prompt: 用户提示词
+94             response: AI响应
+95 
+96         Returns:
+97             str: 存档目录的路径
+98         """
+99         # 获取下一个轮次号
+100 
+101         round_num = self.current_round
+102 
+103         # 获取当前时间戳
+104         timestamp = datetime.datetime.now().isoformat()
+105         
+106         # 创建轮次目录
+107         round_dir = os.path.join(self.issues_path, f"round_{round_num}")
+108         os.makedirs(round_dir, exist_ok=True)
+109         
+110         # 保存系统提示词
+111         with open(os.path.join(round_dir, self.SYS_PROMPT_FILE), "w", encoding="utf-8") as f:
+112             f.write(sys_prompt)
+113         
+114         # 保存用户提示词
+115         with open(os.path.join(round_dir, self.USER_PROMPT_FILE), "w", encoding="utf-8") as f:
+116             f.write(prompt)
+117         
+118         # 保存AI响应
+119         with open(os.path.join(round_dir, self.AI_RESPONSE_FILE), "w", encoding="utf-8") as f:
+120             f.write(response)
+121             
+122         # 保存时间戳
+123         with open(os.path.join(round_dir, self.TIMESTAMP_FILE), "w", encoding="utf-8") as f:
+124             f.write(timestamp)
+125 
+126         # 保存修改的文件列表
+127         if diff_infos:
+128             # 使用 Pydantic 的 dict 方法进行序列化
+129             diff_dicts = [diff.dict() for diff in diff_infos]
+130                 
+131             # 序列化为 JSON 并保存
+132             with open(os.path.join(round_dir, self.MODIFIED_FILES_FILE), "w", encoding="utf-8") as f:
+133                 json.dump(diff_dicts, f, ensure_ascii=False, indent=2)
+134             logger.info(f"保存了 {len(diff_infos)} 个修改的文件记录")
+135         
+136         # 记录日志
+137         logger.info(f"已将日志存档至: {round_dir}")
+138         
+139         # 返回存档目录的路径
+140         return round_dir
+141 
+142     def _get_next_round(self) -> int:
+143         """
+144         获取下一个轮次号
+145 
+146         Returns:
+147             int: 下一个轮次号
+148         """
+149         issue_path = self.issues_path
+150         if not os.path.exists(issue_path):
+151             return 1
+152 
+153         existing_rounds = [
+154             int(d[6:])
+155             for d in os.listdir(issue_path)
+156             if os.path.isdir(os.path.join(issue_path, d)) and (d[6:]).isdigit()
+157         ]
+158 
+159         return max(existing_rounds, default=0) + 1
+160 
+161     def get_current_round(self) -> int:
+162         return self.current_round
+163         
+164     def get_issue_log_entries(self, include_diff: bool = False) -> List[LogEntry]:
+165         """
+166         获取当前issue的所有轮次的日志条目
+167 
+168         Returns:
+169             List[LogEntry]: 日志条目列表，按轮次排序
+170         """
+171         
+172         log_entries = []
+173 
+174         issue_dir = self.issues_path
+175         # 遍历所有轮次目录
+176         for dir_name in os.listdir(issue_dir):
+177             if not dir_name.startswith("round_"):
+178                 continue
+179                 
+180             try:
+181                 round_num = int(dir_name[6:])  # 提取轮次号
+182                 round_dir = os.path.join(issue_dir, dir_name)
+183                 
+184                 # 读取系统提示词
+185                 sys_prompt_path = os.path.join(round_dir, self.SYS_PROMPT_FILE)
+186                 with open(sys_prompt_path, "r", encoding="utf-8") as f:
+187                     sys_prompt = f.read()
+188                 
+189                 # 读取用户提示词
+190                 user_prompt_path = os.path.join(round_dir, self.USER_PROMPT_FILE)
+191                 with open(user_prompt_path, "r", encoding="utf-8") as f:
+192                     prompt = f.read()
+193                 
+194                 # 读取AI响应
+195                 ai_response_path = os.path.join(round_dir, self.AI_RESPONSE_FILE)
+196                 with open(ai_response_path, "r", encoding="utf-8") as f:
+197                     response = f.read()
+198                     
+199                 # 读取修改的文件列表(如果存在)
+200                 modified_files = []
+201                 if include_diff:
+202                     modified_files_path = os.path.join(round_dir, self.MODIFIED_FILES_FILE)
+203                     if os.path.exists(modified_files_path):
+204                         try:
+205                             with open(modified_files_path, "r", encoding="utf-8") as f:
+206                                 diff_dicts = json.load(f)
+207                                 
+208                                 # 将字典转换回 DiffInfo 对象
+209                                 modified_files = [DiffInfo(**diff_dict) for diff_dict in diff_dicts]
+210                         except Exception as e:
+211                             logger.error(f"读取修改文件列表失败: {str(e)}")
+212                     
+213                 # 读取时间戳
+214                 timestamp_path = os.path.join(round_dir, self.TIMESTAMP_FILE)
+215                 timestamp = datetime.datetime.now().isoformat()  # 默认当前时间
+216                 if os.path.exists(timestamp_path):
+217                     try:
+218                         with open(timestamp_path, "r", encoding="utf-8") as f:
+219                             timestamp = f.read().strip()
+220                     except Exception as e:
+221                         logger.error(f"读取时间戳失败: {str(e)}")
+222                 
+223                 # 创建并添加LogEntry对象
+224                 entry = LogEntry(issue_id=self.issue_id, round_num=round_num,
+225                                  sys_prompt=sys_prompt, prompt=prompt, 
+226                                  response=response, timestamp=timestamp, log_path=round_dir,
+227                                  modified_files=modified_files)
+228                 log_entries.append(entry)
+229             except Exception as e:
+230                 logger.error(f"读取轮次 {dir_name} 的日志失败: {str(e)}")
+231         
+232         # 按轮次号排序
+233         return sorted(log_entries, key=lambda entry: entry.round_num)
+234     
+235     def get_issue_round_log_entry(self, round_num: int, include_diff: bool = False) -> Optional[LogEntry]:
+236         """
+237         获取特定轮次的日志条目
+238 
+239         Args:
+240             round_num: 轮次号
+241             include_diff: 是否包含修改信息
+242 
+243         Returns:
+244             Optional[LogEntry]: 指定轮次的日志条目，如果不存在则返回None
+245         """
+246         round_dir = os.path.join(self.issues_path, f"round_{round_num}")
+247         
+248         if not os.path.exists(round_dir):
+249             logger.warning(f"Issue #{self.issue_id} 的轮次 {round_num} 不存在")
+250             return None
+251             
+252         try:
+253             # 直接使用现有方法获取所有轮次，然后过滤出指定轮次
+254             all_entries = self.get_issue_log_entries(include_diff)
+255             return next((entry for entry in all_entries if entry.round_num == round_num), None)
+256         except Exception as e:
+257             logger.error(f"获取 Issue #{self.issue_id} 轮次 {round_num} 的日志失败: {str(e)}")
+258             return None
+259             
+260     def rollback_logs(self, target_round: int) -> bool:
+261         """
+262         将目标轮次之后的日志移至回滚目录
+263         
+264         Args:
+265             target_round: 保留到的轮次，之后的轮次会被移到回滚目录
+266             
+267         Returns:
+268             bool: 操作是否成功
+269         """
+270         try:
+271             # 确保回滚目录存在
+272             os.makedirs(self.rollback_path, exist_ok=True)
+273             
+274             # 获取所有轮次目录
+275             round_dirs = [d for d in os.listdir(self.issues_path) 
+276                          if os.path.isdir(os.path.join(self.issues_path, d)) 
+277                          and d.startswith("round_")]
+278             
+279             # 筛选出需要回滚的轮次目录
+280             rounds_to_rollback = []
+281             for dir_name in round_dirs:
+282                 try:
+283                     round_num = int(dir_name[6:])  # 提取轮次号
+284                     if round_num > target_round:
+285                         rounds_to_rollback.append((round_num, dir_name))
+286                 except ValueError:
+287                     continue
+288             
+289             # 按轮次号排序
+290             rounds_to_rollback.sort(key=lambda x: x[0])
+291             
+292             if not rounds_to_rollback:
+293                 logger.info(f"没有轮次需要回滚")
+294                 return True
+295                 
+296             # 移动轮次日志到回滚目录
+297             for round_num, dir_name in rounds_to_rollback:
+298                 source_path = os.path.join(self.issues_path, dir_name)
+299                 dest_path = os.path.join(self.rollback_path, dir_name)
+300                 
+301                 # 如果目标路径已存在，先删除
+302                 if os.path.exists(dest_path):
+303                     shutil.rmtree(dest_path)
+304                     
+305                 # 移动目录
+306                 shutil.move(source_path, dest_path)
+307                 logger.info(f"已将轮次 {round_num} 的日志移至回滚目录: {dest_path}")
+308             
+309             # 更新当前轮次
+310             self.current_round = self._get_next_round()
+311             return True
+312             
+313         except Exception as e:
+314             logger.error(f"回滚日志失败: {str(e)}")
+315             return False
+316     
+317     def get_rollback_log_entries(self, include_diff: bool = False) -> List[LogEntry]:
+318         """
+319         获取已回滚的所有轮次的日志条目
+320 
+321         Args:
+322             include_diff: 是否包含diff信息
+323 
+324         Returns:
+325             List[LogEntry]: 回滚的日志条目列表，按轮次排序
+326         """
+327         try:
+328             # 如果回滚目录不存在，返回空列表
+329             if not os.path.exists(self.rollback_path):
+330                 return []
+331                 
+332             # 临时保存当前issues_path
+333             original_path = self.issues_path
+334             
+335             # 将issues_path指向rollback_path，复用get_issue_log_entries方法
+336             self.issues_path = self.rollback_path
+337             
+338             # 获取回滚目录中的日志条目
+339             rollback_entries = self.get_issue_log_entries(include_diff)
+340             
+341             # 恢复issues_path
+342             self.issues_path = original_path
+343             
+344             return rollback_entries
+345         except Exception as e:
+346             logger.error(f"获取回滚日志条目失败: {str(e)}")
+347             return []
+348 
+349 if __name__ == "__main__":
+350     config = LogConfig("..", 1)
+351     log_manager = LogManager(config)
+352
+```
+
+
+
+
+```
+File: core/ai.py
+1 from dataclasses import dataclass
+2 from typing import Any, List, Optional
+3 
+4 from dotenv import load_dotenv
+5 from langchain.agents import AgentExecutor, create_openai_tools_agent
+6 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+7 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+8 from langchain_core.runnables.base import RunnableSequence
+9 from langchain_core.tools import BaseTool, Tool
+10 from langchain_openai import ChatOpenAI
+11 
+12 from core.log_config import get_logger
+13 
+14 logger = get_logger(__name__)
+15 
+16 
+17 @dataclass
+18 class AIConfig:
+19     model_name: str = "gpt-4o"
+20     temperature: float = 0.7
+21     verbose: bool = True
+22     max_retries: int = 3
+23     request_timeout: int = 180
+24     sys_prompt: str = "You are a helpful AI assistant."
+25     base_url: Optional[str] = None
+26     api_key: Optional[str] = None
+27 
+28 
+29 class AIAssistant:
+30     """AI 助手类，负责与 AI 模型交互"""
+31 
+32     def __init__(self, config: AIConfig, tools: Optional[List[BaseTool]] = None):
+33         """
+34         初始化 AI 助手
+35 
+36         Args:
+37             config: AIConfig 实例，包含必要的配置信息
+38             tools: 可选的工具列表
+39         """
+40         self.config = config
+41         self.tools = tools or []
+42         self.llm = self._init_llm()
+43         self.agent = None
+44 
+45         # Initialize agent if tools are provided
+46         if self.tools:
+47             self.agent = self._init_agent()
+48 
+49     def _init_llm(self) -> ChatOpenAI:
+50         """Initialize the language model"""
+51         callbacks = [StreamingStdOutCallbackHandler()] if self.config.verbose else None
+52         
+53         return ChatOpenAI(
+54             base_url=self.config.base_url,
+55             api_key=self.config.api_key,
+56             model=self.config.model_name,
+57             temperature=self.config.temperature,
+58             timeout=self.config.request_timeout,
+59             max_retries=self.config.max_retries,
+60             callbacks=callbacks,
+61         )
+62 
+63     def _init_agent(self) -> AgentExecutor:
+64         """Initialize the agent with tools"""
+65         # 创建提示模板
+66         prompt = ChatPromptTemplate.from_messages([
+67             ("system", self.config.sys_prompt),
+68             ("human", "{input}"),
+69             MessagesPlaceholder(variable_name="agent_scratchpad"),
+70         ])
+71 
+72         # 创建代理
+73         agent = create_openai_tools_agent(self.llm, self.tools, prompt)
+74         
+75         # 创建代理执行器
+76         return AgentExecutor(
+77             agent=agent, 
+78             tools=self.tools, 
+79             verbose=self.config.verbose,
+80             max_iterations=5,
+81             handle_parsing_errors=True
+82         )
+83 
+84     def _create_simple_chain(self) -> RunnableSequence:
+85         """创建简单的对话链，不使用工具"""
+86         from langchain_core.prompts import ChatPromptTemplate
+87         
+88         # 创建提示模板
+89         prompt = ChatPromptTemplate.from_messages([
+90             ("system", self.config.sys_prompt),
+91             ("human", "{input}")
+92         ])
+93         
+94         # 创建简单链
+95         chain = prompt | self.llm | (lambda x: x.content)
+96         
+97         return chain
+98 
+99     def add_tool(self, tool: BaseTool) -> None:
+100         """
+101         添加工具
+102 
+103         Args:
+104             tool: 要添加的工具
+105         """
+106         # 检查是否已经有同名工具
+107         for existing_tool in self.tools:
+108             if existing_tool.name == tool.name:
+109                 # 替换同名工具
+110                 self.tools.remove(existing_tool)
+111                 break
+112                 
+113         # 添加新工具
+114         self.tools.append(tool)
+115         
+116         # 重新初始化代理
+117         self.agent = self._init_agent()
+118 
+119     def generate_response(
+120         self, prompt: str, use_tools: bool = False, **kwargs: Any
+121     ) -> Any:
+122         """
+123         生成响应
+124 
+125         Args:
+126             prompt: 用户的提示词
+127             use_tools: 是否使用工具
+128             **kwargs: 其他参数
+129 
+130         Returns:
+131             any: 生成的响应
+132         """
+133         try:
+134             if use_tools and self.tools:
+135                 # 确保代理已初始化
+136                 if self.agent is None:
+137                     self.agent = self._init_agent()
+138                     
+139                 # 使用代理生成响应
+140                 response = self.agent.invoke({"input": prompt})
+141                 return response["output"]
+142             else:
+143                 # 使用简单链生成响应，始终使用流式输出
+144                 chain = self._create_simple_chain()
+145                 
+146                 # 使用流式输出
+147                 response_chunks = []
+148                 for chunk in chain.stream({"input": prompt}):
+149                     response_chunks.append(chunk)
+150                 
+151                 # response_chunks 连接起来就是完整的响应结果
+152                 return "".join(response_chunks)
+153         except Exception as e:
+154             logger.error(f"生成响应时出错: {str(e)}")
+155             raise
+156 
+157 
+158 def create_example_tool() -> Tool:
+159     """Create an example tool for demonstration"""
+160 
+161     def calculator(expression: str) -> str:
+162         try:
+163             result = eval(expression)
+164             return f"计算结果: {result}"
+165         except Exception as e:
+166             logger.error(f"计算错误: {str(e)}")
+167             return f"计算错误: {str(e)}"
+168 
+169     return Tool.from_function(
+170         func=calculator,
+171         name="calculator",
+172         description="计算数学表达式",
+173     )
+174 
+175 
+176 if __name__ == "__main__":
+177     # 设置环境变量
+178     load_dotenv()
+179     
+180     # 创建AI助手
+181     ai_assistant = AIAssistant(
+182         config=AIConfig(model_name="gpt-4o", temperature=0.7)
+183     )
+184     
+185     # 添加示例工具
+186     ai_assistant.add_tool(create_example_tool())
+187     
+188     # 测试生成响应
+189     response = ai_assistant.generate_response(
+190         "计算 3 + 5 的结果是多少?", use_tools=True
+191     )
+192     
+193     logger.info(f"Response: {response}")
+194
+```
+
+
+
+
+```
+File: core/workflow_engine.py
+1 import os
+2 import shutil
+3 import tempfile
+4 import uuid
+5 from dataclasses import dataclass
+6 from typing import Optional
+7 
+8 from core.ai import AIConfig
+9 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+10 from core.code_engineer import CodeEngineer, CodeEngineerConfig
+11 from core.decision import DecisionProcess
+12 from core.diff import Diff
+13 from core.file_memory import FileMemory, FileMemoryConfig
+14 from core.file_selector import FileSelector
+15 from core.git_manager import GitManager, GitConfig
+16 from core.log_config import get_logger
+17 from core.log_manager import LogManager, LogConfig
+18 from core.prompt_generator import PromptGenerator, PromptData
+19 from core.version_manager import VersionManager
+20 
+21 logger = get_logger(__name__)
+22 
+23 @dataclass
+24 class WorkflowEngineConfig:
+25     project_dir: str
+26     issue_id:int
+27     core_model:str = "gpt-4o"
+28     data_model:str = "gpt-4o"
+29     core_template: float = 0.7
+30     data_template: float = 0.7
+31     max_retry: int = 3,
+32     default_branch: str = "main"
+33     mode: str = "client" # ["client", "bot"] bot模式下，每次进行工作时，会hard reset到issues的最新分支上
+34     base_url: Optional[str] = None
+35     api_key: Optional[str] = None
+36     github_remote_url: Optional[str] =None
+37     github_token: Optional[str] = None
+38 
+39 
+40 class WorkflowEngine:
+41     CODE_TIMES = 0
+42     CHAT_TIMES = 0
+43     """
+44     工作流引擎，协调版本管理、日志管理和AI交互
+45     """
+46     def __init__(self, config: WorkflowEngineConfig):
+47         """
+48         初始化工作流引擎
+49         
+50         Args:
+51             config: 工作流配置
+52         """
+53         self.CODE_TIMES = 0
+54         self.CHAT_TIMES = 0
+55         # 存储原始配置
+56         self.original_config = config
+57         
+58         # 根据模式设置工作目录
+59         if config.mode == "bot":
+60             # 创建临时目录作为工作区
+61             self.temp_dir = os.path.join(
+62                 tempfile.gettempdir(),
+63                 f"bella-bot-{config.issue_id}-{str(uuid.uuid4())[:8]}"
+64             )
+65             os.makedirs(self.temp_dir, exist_ok=True)
+66             # 更新配置以使用临时目录
+67             self.config = WorkflowEngineConfig(
+68                 project_dir=self.temp_dir,
+69                 **{k: v for k, v in vars(config).items() if k != 'project_dir'}
+70             )
+71             logger.info(f"Bot模式：创建临时工作目录 {self.temp_dir}")
+72         else:
+73             # 客户端模式直接使用指定的目录
+74             self.config = config
+75             self.temp_dir = None
+76             logger.info("当前为client模式")
+77 
+78         self.project_dir = os.path.abspath(self.config.project_dir)
+79         # 创建AI配置
+80         self.core_ai_config = AIConfig(
+81             model_name=config.core_model,
+82             temperature=config.core_template,
+83             base_url=config.base_url,
+84             api_key=config.api_key
+85         )
+86         
+87         self.data_ai_config = AIConfig(
+88             model_name=config.data_model,
+89             temperature=config.data_template,
+90             base_url=config.base_url,
+91             api_key=config.api_key
+92         )
+93         
+94         # 创建Git配置
+95         self.git_config = GitConfig(
+96             repo_path=self.project_dir,
+97             remote_url=config.github_remote_url or os.getenv("GIT_REMOTE"),
+98             auth_token=config.github_token or os.getenv("GITHUB_TOKEN"),
+99             default_branch=config.default_branch
+100         )
+101         
+102         # 创建日志配置
+103         self.log_config = LogConfig(
+104             project_dir=self.project_dir,
+105             issue_id=config.issue_id,
+106             mode=config.mode
+107         )
+108         
+109         # 初始化管理器
+110         self.git_manager = GitManager(config=self.git_config)
+111 
+112         # 检出对应的分支
+113         if self.config.mode == "bot":
+114             try:
+115                 # 重置到issue对应的分支
+116                 self.git_manager.reset_to_issue_branch(self.config.issue_id)
+117                 logger.info(f"成功初始化Bot模式环境，工作目录: {self.temp_dir}")
+118             except Exception as e:
+119                 logger.error(f"初始化Bot模式环境失败: {str(e)}")
+120                 self._cleanup_environment()
+121                 raise
+122 
+123         self.log_manager = LogManager(config=self.log_config)
+124         
+125         # 初始化文件记忆管理，传入log_manager
+126         self.file_memory = FileMemory(
+127             config=FileMemoryConfig(
+128                 git_manager=self.git_manager,
+129                 ai_config=self.data_ai_config,
+130                 project_dir=self.project_dir,
+131                 log_manager=self.log_manager
+132             )
+133         )
+134         self.version_manager = VersionManager(
+135             issue_id=config.issue_id,
+136             ai_config=self.core_ai_config,
+137             log_manager=self.log_manager,
+138             git_manager=self.git_manager,
+139             file_memory=self.file_memory
+140         )
+141         self.file_selector = FileSelector(
+142             self.project_dir,
+143             self.config.issue_id,
+144             ai_config=self.core_ai_config
+145         )
+146 
+147         # 初始化代码工程师
+148         self.code_engineer_config = CodeEngineerConfig(
+149             project_dir=self.project_dir,
+150             ai_config=self.core_ai_config
+151         )
+152         self.engineer = CodeEngineer(
+153             self.code_engineer_config,
+154             self.log_manager,
+155             Diff(self.data_ai_config)
+156         )
+157         
+158         # 初始化聊天处理器
+159         self.chat_processor = ChatProcessor(
+160             ai_config=self.core_ai_config,
+161             log_manager=self.log_manager,
+162             config=ChatProcessorConfig(system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。")
+163         )
+164         
+165         # 初始化决策环境
+166         self.decision_env = DecisionProcess(
+167             ai_config=self.core_ai_config,
+168             version_manager=self.version_manager
+169         )
+170     
+171     def process_requirement(self, user_requirement: str) -> Optional[str]:
+172         """
+173         处理用户需求
+174         
+175         Args:
+176             user_requirement: 用户需求
+177 
+178         Returns:
+179             str: 处理结果的响应文本
+180         """
+181         try:
+182 
+183             current_round = self.log_manager.get_current_round()
+184 
+185             # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+186             if self.file_memory and current_round > 1:
+187                 self.file_memory.update_file_details()
+188                 logger.info("已更新文件详细信息")
+189 
+190             response = self._process_requirement_internal(user_requirement)
+191             
+192             # 如果是bot模式，在结束时清理临时目录
+193             if self.config.mode == "bot":
+194                 self._cleanup_environment()
+195             
+196             return response
+197         except Exception as e:
+198             logger.error(f"处理需求时发生错误: {str(e)}")
+199             raise
+200 
+201 
+202     def _finalize_changes(self, mode: str, comment_text: str) -> bool:
+203         """
+204         完成更改，在bot模式下提交并推送更改
+205 
+206         Args:
+207             mode: 工作模式 ("client" 或 "bot")
+208             comment_text: comment内容
+209 
+210         Returns:
+211             bool: 操作是否成功
+212         """
+213         if mode == "bot":
+214             self.git_manager.commit(f"Issues #{self.config.issue_id} - Changes by Bella-Issues-Bot")
+215             self.git_manager.push()
+216             self.git_manager.add_issue_comment(self.config.issue_id, comment_text)
+217         return True
+218         
+219     def _cleanup_environment(self) -> None:
+220         """
+221         清理工作环境，删除临时目录
+222         """
+223         if self.config.mode == "bot" and self.temp_dir and os.path.exists(self.temp_dir):
+224             try:
+225                 # 关闭git仓库连接
+226                 if hasattr(self, 'git_manager') and self.git_manager:
+227                     self.git_manager.delete_local_repository()
+228                 
+229                 # 删除临时目录
+230                 shutil.rmtree(self.temp_dir, ignore_errors=True)
+231                 logger.info(f"已清理临时工作目录: {self.temp_dir}")
+232             except Exception as e:
+233                 logger.warning(f"清理临时目录时出错: {str(e)}")
+234                 # 即使清理失败也不抛出异常，让主流程继续
+235 
+236     def _process_requirement_internal(self, user_requirement: str) -> Optional[str]:
+237         """
+238         内部处理需求的方法
+239         
+240         Args:
+241             user_requirement: 用户需求
+242             
+243         Returns:
+244             str: 处理结果
+245         """
+246         # 先通过决策环境分析需求类型
+247         decision_result = self.decision_env.analyze_requirement(user_requirement)
+248         
+249         logger.info(f"决策结果: 是否需要修改代码={decision_result.needs_code_modification}, "
+250                     f"理由={decision_result.reasoning}")
+251         
+252         if decision_result.needs_code_modification:
+253             # 执行代码修改流程
+254             response = self._run_code_generation_workflow(user_requirement)
+255         else: 
+256             # 执行对话流程
+257             response = self._run_chat_workflow(user_requirement)
+258         
+259         # 如果是Bot模式且有GitHub配置，自动回复到issue
+260         if self.config.mode == "bot":
+261             try:
+262                 self._finalize_changes(mode=self.config.mode, comment_text=response)
+263                 logger.info(f"更改已经推送到远端，并添加了Issue评论")
+264             except Exception as e:
+265                 logger.error(f"添加Issue评论时出错: {str(e)}")
+266                 
+267         return response
+268     
+269     def _run_code_generation_workflow(self, user_requirement: str) -> Optional[str]:
+270         """
+271         执行代码生成流程，基于example_code_generate.py的逻辑
+272         
+273         Args:
+274             user_requirement: 用户需求
+275             
+276         Returns:
+277             str: 处理结果
+278         """
+279         logger.info("开始执行代码生成流程")
+280 
+281         # 确定当前版本
+282         requirement, history = self.version_manager.ensure_version_and_generate_context(user_requirement)
+283 
+284         # 生成提示词
+285         user_prompt = self._get_user_prompt(requirement, history)
+286 
+287         # 根据提示词修改代码
+288         success, response = self.engineer.process_prompt(prompt=user_prompt)
+289 
+290         # 提交更改
+291         if success:
+292             return response
+293         else:
+294             self.CODE_TIMES += 1
+295             if self.CODE_TIMES >= self.config.max_retry:
+296                 logger.error("code workflow超过最大重试次数")
+297                 return self._run_chat_workflow(user_requirement)
+298             else:
+299                 return self._run_code_generation_workflow(user_requirement)
+300     
+301     def _run_chat_workflow(self, user_requirement: str) -> Optional[str]:
+302         """
+303         执行聊天流程，基于example_chat_process.py的逻辑
+304         
+305         Args:
+306             user_requirement: 用户需求
+307             
+308         Returns:
+309             str: 处理结果
+310         """
+311         logger.info("开始执行聊天回复流程")
+312 
+313         history = self.version_manager.get_formatted_history()
+314 
+315         # 生成提示词
+316         user_prompt = self._get_user_prompt(user_requirement, history)
+317         
+318         # 处理聊天请求
+319         response = self.chat_processor.process_chat(user_prompt)
+320 
+321         if(response):
+322             return response
+323         else:
+324             self.CHAT_TIMES += 1
+325             if self.CHAT_TIMES >= self.config.max_retry:
+326                 logger.error("chat workflow超过最大重试次数")
+327                 return None
+328             else:
+329                 return self._run_chat_workflow(user_requirement)
+330 
+331     def _get_user_prompt(self, requirement: str, history: str) -> str:
+332         # 选择文件
+333         files = self.file_selector.select_files_for_requirement(requirement)
+334         descriptions = FileMemory.get_selected_file_descriptions(self.project_dir, files)
+335 
+336         # 准备提示词数据
+337         data = PromptData(
+338             requirement=requirement,
+339             project_dir=self.project_dir,
+340             steps=history,
+341             files=files,
+342             file_desc=descriptions
+343         )
+344 
+345         # 生成提示词
+346         return PromptGenerator.generatePrompt(data)
+347
+```
+
+
+
+
+
+
+```
+File: client/terminal.py
+1 """
+2 Terminal entrypoint for the WorkflowEngine.
+3 Provides functionality to run the engine from terminal with command-line arguments.
+4 """
+5 import logging
+6 import os
+7 import sys
+8 
+9 from dotenv import load_dotenv
+10 
+11 from client.cli import parse_args, get_requirement_text, build_config_from_args
+12 from core.log_config import setup_logging
+13 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+14 
+15 
+16 def run_workflow_from_terminal() -> None:
+17     """
+18     Main entry point for running the workflow engine from terminal.
+19     Parses command line arguments and runs the workflow engine.
+20     """
+21     # Load environment variables from .env file if present
+22     load_dotenv()
+23     
+24     # Parse command line arguments
+25     args = parse_args()
+26     
+27     # Get requirement text
+28     requirement = get_requirement_text(args)
+29     if not requirement:
+30         sys.exit(1)
+31     
+32     # Build config from arguments
+33     config_params = build_config_from_args(args)
+34 
+35     setup_logging(log_level=getattr(logging, args.log_level))
+36     
+37     # Try to get API key from environment if not provided as argument
+38     if "api_key" not in config_params and os.environ.get("OPENAI_API_KEY"):
+39         config_params["api_key"] = os.environ.get("OPENAI_API_KEY")
+40     
+41     # Create the workflow engine config
+42     config = WorkflowEngineConfig(**config_params)
+43     
+44     # Initialize and run the workflow engine
+45     engine = WorkflowEngine(config)
+46     engine.process_requirement(requirement)
+47 
+48 if __name__ == "__main__":
+49     response = run_workflow_from_terminal()
+50 
+51
+```
+
+
+
+
+```
+File: pyproject.toml
+1 [tool.poetry]
+2 name = "bella-issues-bot"
+3 version = "0.1.18"
+4 description = "bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：个人开发助手模式：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。GitHub自动化模式：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。"
+5 authors = ["saizhuolin"]
+6 license = "MIT"
+7 readme = "README.md"
+8 homepage = "https://github.com/szl97/bella-issues-bot"
+9 repository = "https://github.com/szl97/bella-issues-bot"
+10 documentation = "https://github.com/szl97/bella-issues-bot"
+11 packages = [
+12     {include = "core"},
+13     {include = "client"}
+14 ]
+15 classifiers = [
+16   "Development Status :: 4 - Beta",
+17   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+18 ]
+19 
+20 [build-system]
+21 requires = ["poetry-core>=1.0.0"]
+22 build-backend = "poetry.core.masonry.api"
+23 
+24 [tool.poetry.dependencies]
+25 python = ">=3.10,<3.13"
+26 gitpython = "^3.1.40"
+27 PyGithub = "^2.1.1"
+28 langchain = ">=0.3.0,<0.4.0"
+29 langchain-openai = ">=0.1.0"
+30 langchain-core = ">=0.3.0,<0.4.0"
+31 langchain-community = ">=0.3.0,<0.4.0"
+32 python-dotenv = "^1.0.0"
+33 pydantic = "^2.5.0"
+34 openai = "^1.3.5"
+35 pytest = "^7.4.0"
+36 pathspec = ">=0.9.0"
+37 toml = ">=0.10.2"
+38 typing-extensions = ">=4.0.0"
+39 jinja2 = ">=3.1.0,<4.0.0"
+40 colorlog = ">=6.8.0,<7.0.0"
+41 colorama = ">=0.4.4"
+42 argparse = ">=1.4.0"
+43 pyyaml = ">=6.0"
+44 
+45 [tool.poetry.scripts]
+46 bella-issues-bot = 'client.terminal:run_workflow_from_terminal'
+47 bella-file-memory = 'client.file_memory_client:main'
+48 bella-github-workflows = 'client.github_workflow_generator:main'
+49 
+50 [tool.ruff]
+51 select = ["F", "E", "W", "I001"]
+52 show-fixes = false
+53 target-version = "py310"
+54 task-tags = ["TODO", "FIXME"]
+55 extend-ignore = ["E501", "E722"]
+56 
+57 [tool.black]
+58 target-version = ["py310"]
+59 
+60 [tool.ruff.isort]
+61 known-first-party = []
+62 known-third-party = []
+63 section-order = [
+64   "future",
+65   "standard-library",
+66   "third-party",
+67   "first-party",
+68   "local-folder",
+69 ]
+70 combine-as-imports = true
+71 split-on-trailing-comma = false
+72 lines-between-types = 1
+73
+```
+
+
+
+
+# 历史执行信息
+
+【round_1】
+requirement: 
+为LogManager写一个example
+agent_response: 
+I'll create an example file that demonstrates how to use the LogManager class from the core/log_manager.py file. This example will show different use cases of the LogManager functionality, including initializing the manager, archiving logs, retrieving log entries, and performing rollbacks.
+
+Let's start by analyzing what we need:
+
+1. Create an example file that demonstrates how to use LogManager
+2. Include different use cases: initialization, archiving logs, retrieving logs, and rollbacks
+3. Make the example easy to understand and educational
+4. Ensure it follows the project structure and coding conventions
+
+Here's my implementation:
+
+```diff
+--- /dev/null
++++ examples/example_log_manager.py
+@@ -0,0 +1,104 @@
++"""
++这个示例展示如何使用LogManager进行日志管理，包括初始化、存档日志、检索日志和回滚操作
++"""
++import os
++import sys
++from typing import List
++
++# 添加项目根目录到sys.path，确保可以导入core模块
++sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
++
++from core.diff import DiffInfo
++from core.log_manager import LogManager, LogConfig, LogEntry
++from core.log_config import setup_logging
++
++
++def print_separator(title: str):
++    """打印分隔线和标题，使输出更易读"""
++    print("\n" + "=" * 50)
++    print(f"  {title}")
++    print("=" * 50)
++
++
++def display_log_entries(entries: List[LogEntry]):
++    """显示日志条目的主要信息"""
++    for entry in entries:
++        print(f"轮次 {entry.round_num} - {entry.timestamp}")
++        print(f"  系统提示词 (前30字符): {entry.sys_prompt[:30]}...")
++        print(f"  用户提示词 (前30字符): {entry.prompt[:30]}...")
++        print(f"  响应内容 (前30字符): {entry.response[:30]}...")
++        print(f"  修改的文件数量: {len(entry.modified_files)}")
++        print("---")
++
++
++def main():
++    """示例主函数，展示LogManager的各种用法"""
++    # 设置日志
++    setup_logging()
++    
++    # 创建工作目录 - 使用当前项目根目录
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
++    issue_id = 999  # 使用一个示例issue_id
++    
++    print_separator("1. 初始化LogManager")
++    # 初始化LogManager
++    log_config = LogConfig(
++        project_dir=project_dir,
++        issue_id=issue_id,
++        mode="client"  # 客户端模式
++    )
++    log_manager = LogManager(config=log_config)
++    
++    print(f"LogManager已初始化，当前轮次: {log_manager.get_current_round()}")
++    print(f"日志路径: {log_manager.logs_path}")
++    print(f"Issue日志路径: {log_manager.issues_path}")
++    
++    # 创建示例数据
++    print_separator("2. 存档日志")
++    
++    # 示例提示和响应
++    sys_prompt = "你是一个代码助手，帮助用户解决编程问题。"
++    user_prompt = "请帮我实现一个简单的Python函数，用于计算两个数的最大公约数。"
++    ai_response = """
++    以下是计算最大公约数的Python函数:
++    
++    ```python
++    def gcd(a, b):
++        while b:
++            a, b = b, a % b
++        return a
++    ```
++    
++    这个函数使用欧几里德算法计算两个数的最大公约数。
++    """
++    
++    # 示例文件修改
++    diff_info = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n",
++        new_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1 +1,6 @@\n # Math utilities\n+\n+def gcd(a, b):\n+    while b:\n+        a, b = b, a % b\n+    return a\n"
++    )
++    
++    # 存档日志
++    log_path = log_manager.archive_logs(
++        sys_prompt=sys_prompt,
++        prompt=user_prompt,
++        response=ai_response,
++        diff_infos=[diff_info]
++    )
++    print(f"日志已存档到: {log_path}")
++    
++    print_separator("3. 获取日志条目")
++    log_entries = log_manager.get_issue_log_entries(include_diff=True)
++    print(f"找到 {len(log_entries)} 条日志条目")
++    display_log_entries(log_entries)
++    
++    print_separator("4. 获取特定轮次的日志条目")
++    round_entry = log_manager.get_issue_round_log_entry(round_num=1, include_diff=True)
++    if round_entry:
++        print(f"轮次 {round_entry.round_num} 的日志条目")
++        print(f"修改的文件: {[diff.file_path for diff in round_entry.modified_files]}")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+```diff
+--- /dev/null
++++ requirements.txt
+@@ -0,0 +4 @@
++pydantic>=2.0.0
++python-dotenv>=1.0.0
++gitpython>=3.1.0
++openai>=1.0.0
+```
+
+This example demonstrates the following LogManager functionalities:
+
+1. **Initialization**: Setting up the LogManager with proper configuration, including project directory and issue ID.
+2. **Archiving Logs**: Shows how to archive system prompts, user prompts, AI responses, and file modifications.
+3. **Retrieving Log Entries**: Demonstrates how to retrieve all log entries for a specific issue.
+4. **Retrieving Specific Round**: Shows how to get a log entry for a specific round.
+
+The example is organized with clear sections separated by visual dividers to make the output more readable. It also includes helper functions to display log entries in a structured format.
+
+Note that this example doesn't demonstrate the rollback functionality directly (to avoid actually rolling back files in a real project), but it shows how to access the necessary functions and information that would be required for such operations.
+
+When executed, this example will create actual log entries in your project's `.eng/memory/queries/#999` directory, serving as a practical demonstration of how LogManager stores information.
+
+This concludes a fully working implementation.
+
+【round_2】
+requirement: 
+增加一下使用的示例数据
+agent_response: 
+I'll create an enhanced version of the `example_log_manager.py` that includes more complete example data and demonstrates the rollback functionality. Let me implement this:
+
+```diff
+--- examples/example_log_manager.py
++++ examples/example_log_manager.py
+@@ -62,7 +62,27 @@
+     # 示例提示和响应
+     sys_prompt = "你是一个代码助手，帮助用户解决编程问题。"
+     user_prompt = "请帮我实现一个简单的Python函数，用于计算两个数的最大公约数。"
+-    ai_response = """
++    ai_response = """
++    以下是计算最大公约数的Python函数:
++    
++    ```python
++    def gcd(a, b):
++        while b:
++            a, b = b, a % b
++        return a
++    ```
++    
++    这个函数使用欧几里德算法计算两个数的最大公约数。
++    """
++    
++    # 示例文件修改
++    diff_info = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n",
++        new_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1 +1,6 @@\n # Math utilities\n+\n+def gcd(a, b):\n+    while b:\n+        a, b = b, a % b\n+    return a\n"
++    )
++    
++    # 存档日志
++    log_path = log_manager.archive_logs(
++        sys_prompt=sys_prompt,
++        prompt=user_prompt,
++        response=ai_response,
++        diff_infos=[diff_info]
++    )
++    print(f"日志已存档到: {log_path}")
++    
++    # 创建第二轮对话的示例数据
++    print_separator("2.1 存档第二轮日志")
++    
++    sys_prompt_round2 = "你是一个代码助手，帮助用户解决编程问题。"
++    user_prompt_round2 = "请为刚才的GCD函数添加类型注解和文档字符串。"
++    ai_response_round2 = """
+     以下是计算最大公约数的Python函数:
+     
+     ```python
+@@ -70,24 +90,49 @@
+         while b:
+             a, b = b, a % b
+         return a
++    
++    # 添加类型注解和文档字符串的改进版本:
++    def gcd(a: int, b: int) -> int:
++        """
++        使用欧几里德算法计算两个整数的最大公约数。
++        
++        Args:
++            a: 第一个整数
++            b: 第二个整数
++            
++        Returns:
++            a和b的最大公约数
++        """
++        while b:
++            a, b = b, a % b
++        return a
+     ```
+     
+-    这个函数使用欧几里德算法计算两个数的最大公约数。
++    添加了类型注解和详细的文档字符串，使函数更易于理解和使用。
+     """
+     
+-    # 示例文件修改
+-    diff_info = DiffInfo(
+-        file_path="math_utils.py",
+-        original_content="# Math utilities\n",
+-        new_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
+-        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1 +1,6 @@\n # Math utilities\n+\n+def gcd(a, b):\n+    while b:\n+        a, b = b, a % b\n+    return a\n"
++    # 第二轮的文件修改
++    diff_info_round2 = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
++        new_content="# Math utilities\n\ndef gcd(a: int, b: int) -> int:\n    \"\"\"\n    使用欧几里德算法计算两个整数的最大公约数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最大公约数\n    \"\"\"\n    while b:\n        a, b = b, a % b\n    return a\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1,6 +1,16 @@\n # Math utilities\n\n-def gcd(a, b):\n+def gcd(a: int, b: int) -> int:\n+    \"\"\"\n+    使用欧几里德算法计算两个整数的最大公约数。\n+    \n+    Args:\n+        a: 第一个整数\n+        b: 第二个整数\n+        \n+    Returns:\n+        a和b的最大公约数\n+    \"\"\"\n     while b:\n         a, b = b, a % b\n     return a\n"
+     )
+     
+-    # 存档日志
+-    log_path = log_manager.archive_logs(
+-        sys_prompt=sys_prompt,
+-        prompt=user_prompt,
+-        response=ai_response,
+-        diff_infos=[diff_info]
++    # 存档第二轮日志
++    log_path_round2 = log_manager.archive_logs(
++        sys_prompt=sys_prompt_round2,
++        prompt=user_prompt_round2,
++        response=ai_response_round2,
++        diff_infos=[diff_info_round2]
+     )
+-    print(f"日志已存档到: {log_path}")
++    print(f"第二轮日志已存档到: {log_path_round2}")
++    
++    # 创建第三轮对话的示例数据 - 新的函数添加
++    print_separator("2.2 存档第三轮日志")
++    
++    sys_prompt_round3 = "你是一个代码助手，帮助用户解决编程问题。"
++    user_prompt_round3 = "请添加一个新的函数计算最小公倍数(LCM)，使用之前的GCD函数。"
++    ai_response_round3 = """
++    我将添加一个计算最小公倍数的函数，利用GCD函数和以下公式：lcm(a,b) = a*b / gcd(a,b)
++    
++    ```python
++    def lcm(a: int, b: int) -> int:
++        """
++        计算两个整数的最小公倍数。
++        
++        Args:
++            a: 第一个整数
++            b: 第二个整数
++            
++        Returns:
++            a和b的最小公倍数
++        """
++        return abs(a * b) // gcd(a, b) if a and b else 0
++    ```
++    
++    这个函数使用了GCD函数来高效计算最小公倍数，并处理了零值的边缘情况。
++    """
++    
++    # 第三轮的文件修改
++    diff_info_round3 = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n\ndef gcd(a: int, b: int) -> int:\n    \"\"\"\n    使用欧几里德算法计算两个整数的最大公约数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最大公约数\n    \"\"\"\n    while b:\n        a, b = b, a % b\n    return a\n",
++        new_content="# Math utilities\n\ndef gcd(a: int, b: int) -> int:\n    \"\"\"\n    使用欧几里德算法计算两个整数的最大公约数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最大公约数\n    \"\"\"\n    while b:\n        a, b = b, a % b\n    return a\n\n\ndef lcm(a: int, b: int) -> int:\n    \"\"\"\n    计算两个整数的最小公倍数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最小公倍数\n    \"\"\"\n    return abs(a * b) // gcd(a, b) if a and b else 0\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -13,3 +13,14 @@\n     while b:\n         a, b = b, a % b\n     return a\n+\n+\n+def lcm(a: int, b: int) -> int:\n+    \"\"\"\n+    计算两个整数的最小公倍数。\n+    \n+    Args:\n+        a: 第一个整数\n+        b: 第二个整数\n+        \n+    Returns:\n+        a和b的最小公倍数\n+    \"\"\"\n+    return abs(a * b) // gcd(a, b) if a and b else 0\n"
++    )
++    
++    # 存档第三轮日志
++    log_path_round3 = log_manager.archive_logs(
++        sys_prompt=sys_prompt_round3,
++        prompt=user_prompt_round3,
++        response=ai_response_round3,
++        diff_infos=[diff_info_round3]
++    )
++    print(f"第三轮日志已存档到: {log_path_round3}")
+@@ -98,8 +143,41 @@
+     print(f"找到 {len(log_entries)} 条日志条目")
+     display_log_entries(log_entries)
+     
+-    print_separator("4. 获取特定轮次的日志条目")
++    print_separator("4. 获取特定轮次的详细日志")
+     round_entry = log_manager.get_issue_round_log_entry(round_num=1, include_diff=True)
++    display_round_info(round_entry)
++    
++    round_entry2 = log_manager.get_issue_round_log_entry(round_num=2, include_diff=True)
++    display_round_info(round_entry2)
++    
++    print_separator("5. 演示回滚操作")
++    print("假设我们想回滚到第一轮结束的状态（在添加类型注解之前）")
++    
++    # 模拟回滚前后的状态
++    print("\n当前状态 (第三轮后):")
++    print("math_utils.py 包含 GCD 和 LCM 两个函数")
++    
++    print("\n回滚到第一轮后的预期状态:")
++    print("math_utils.py 只包含原始的 GCD 函数，没有类型注解和文档字符串")
++    
++    # 在实际应用中，您可以使用以下代码执行回滚
++    # log_manager.rollback_to_round(1)
++    print("\n说明: 实际回滚操作未执行，因为这可能会影响您的项目文件")
++    print("使用 log_manager.rollback_to_round(round_num) 执行实际回滚")
++
++
++def display_round_info(round_entry):
++    """显示特定轮次的详细信息"""
+     if round_entry:
+         print(f"轮次 {round_entry.round_num} 的日志条目")
+-        print(f"修改的文件: {[diff.file_path for diff in round_entry.modified_files]}")
++        print(f"时间戳: {round_entry.timestamp}")
++        print(f"修改的文件: {[diff.file_path for diff in round_entry.modified_files]}")
++        
++        # 显示每个修改文件的差异
++        for diff in round_entry.modified_files:
++            print(f"\n文件: {diff.file_path} 的修改:")
++            print(f"差异内容片段: \n{diff.diff_content[:200]}..." if len(diff.diff_content) > 200 
++                  else f"差异内容: \n{diff.diff_content}")
++    else:
++        print(f"未找到指定轮次的日志条目")
+```
+
+This enhanced version of the example includes:
+
+1. **Multiple Rounds of Logs**: Now demonstrates archiving logs for three complete rounds of interaction:
+   - Round 1: Creating a basic GCD function
+   - Round 2: Adding type hints and docstrings to the GCD function
+   - Round 3: Adding a new LCM function that uses the GCD function
+
+2. **More Realistic Data**: Each round includes:
+   - System prompts
+   - User prompts with progressive development of a math utilities module
+   - Detailed AI responses with code examples
+   - DiffInfo objects with original content, new content, and formatted diff content
+
+3. **Enhanced Log Retrieval**: The example now shows how to:
+   - Retrieve all log entries for an issue
+   - Get specific round entries with detailed information
+   - Display the diff content for each modified file
+
+4. **Rollback Simulation**: The example explains the rollback functionality conceptually, showing what would happen if you were to roll back to an earlier round. The actual rollback command is commented out to prevent accidental file changes in your project.
+
+5. **Better Display Functions**: Added a dedicated function to show detailed information about a specific round's log entry, including file modifications and diff excerpts.
+
+This enhanced example gives a more complete demonstration of the LogManager's capabilities throughout a multi-round development process, making it easier to understand how the system maintains context and history.
+
+This concludes a fully working implementation.
+
+
+
+# 用户需求
+
+优化控制台输出的样式
