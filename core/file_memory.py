@@ -428,7 +428,7 @@ class FileMemory:
                         if diff_info.file_name and diff_info.is_create:
                             modified_files.add(diff_info.file_name)
                     
-                    logger.info(f"从LogManager获取到上一轮({prev_round})修改的文件: {len(modified_files)}个")
+                    logger.info(f"从LogManager获取到上一轮({prev_round})新增的文件: {len(modified_files)}个")
                     return modified_files
             return set()
         except Exception as e:
