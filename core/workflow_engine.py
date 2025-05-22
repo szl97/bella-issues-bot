@@ -108,6 +108,18 @@ class WorkflowEngine:
         
         # 初始化管理器
         self.git_manager = GitManager(config=self.git_config)
+
+        # 检出对应的分支
+        if self.config.mode == "bot":
+            try:
+                # 重置到issue对应的分支
+                self.git_manager.reset_to_issue_branch(self.config.issue_id)
+                logger.info(f"成功初始化Bot模式环境，工作目录: {self.temp_dir}")
+            except Exception as e:
+                logger.error(f"初始化Bot模式环境失败: {str(e)}")
+                self._cleanup_environment()
+                raise
+
         self.log_manager = LogManager(config=self.log_config)
         
         # 初始化文件记忆管理，传入log_manager
@@ -167,9 +179,14 @@ class WorkflowEngine:
             str: 处理结果的响应文本
         """
         try:
-            # 初始化环境
-            self._setup_environment()
-            
+
+            current_round = self.log_manager.get_current_round()
+
+            # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+            if self.file_memory and current_round > 1:
+                self.file_memory.update_file_details()
+                logger.info("已更新文件详细信息")
+
             response = self._process_requirement_internal(user_requirement)
             
             # 如果是bot模式，在结束时清理临时目录
@@ -181,25 +198,6 @@ class WorkflowEngine:
             logger.error(f"处理需求时发生错误: {str(e)}")
             raise
 
-    def _setup_environment(self) -> None:
-        """
-        根据模式设置工作环境
-        """
-        if self.config.mode == "bot":
-            try:
-                # 重置到issue对应的分支
-                self.git_manager.reset_to_issue_branch(self.config.issue_id)
-                logger.info(f"成功初始化Bot模式环境，工作目录: {self.temp_dir}")
-            except Exception as e:
-                logger.error(f"初始化Bot模式环境失败: {str(e)}")
-                self._cleanup_environment()
-                raise
-        current_round = self.log_manager.get_current_round()
-
-        # 如果轮次大于1，增量更新上一轮修改的文件详细信息
-        if self.file_memory and current_round > 1:
-            self.file_memory.update_file_details()
-            logger.info("已更新文件详细信息")
 
     def _finalize_changes(self, mode: str, comment_text: str) -> bool:
         """

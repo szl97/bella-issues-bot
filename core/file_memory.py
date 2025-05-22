@@ -366,8 +366,7 @@ class FileMemory:
         
         # 读取现有描述
         existing_details = self._read_file_details()
-        
-        files_to_process = []
+
         
         # 如果有LogManager，使用它获取上一轮修改的文件
         if self.log_manager:
