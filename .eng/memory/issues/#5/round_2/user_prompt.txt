@@ -1,0 +1,1224 @@
+# 项目文件描述
+
+
+- examples/advanced/requirements/feature_request.txt: 这是一个需求文档，描述了文件上传系统的功能要求，包括多文件上传、50MB大小限制、支持的文件类型(PDF/DOCX/XLSX/JPG/PNG)、存储配置、返回唯一标识符和URL，以及基本验证和安全检查功能。
+
+- examples/example_chat_process.py: 聊天处理流程示例，展示如何使用ChatProcessor处理用户对话需求。与代码生成示例不同，不使用版本管理，主要演示如何回答用户关于项目的问题。
+
+- examples/example_code_generate.py: 代码生成流程示例，展示如何使用CodeEngineer处理代码修改需求。演示了从需求分析到代码生成和提交的完整流程，包含main函数作为入口点。
+
+- examples/example_file_memory_client.py: 示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
+
+- examples/example_log_manager.py: 这个文件是一个示例代码，展示了如何使用LogManager进行日志管理。主要功能包括初始化、存档日志、检索日志和回滚操作。包含的关键类或函数有LogManager、LogConfig、LogEntry以及setup_logging等。与core模块中的diff、log_manager、log_config等文件交互明显。
+
+- examples/example_terminal.py: 展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
+
+- examples/example_workflow.py: WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
+
+- examples/advanced/custom_workflow.py: 自定义工作流处理程序，展示如何将bella-issues-bot集成到自定义应用中。包含preprocess_requirement和postprocess_response两个关键函数，分别用于需求预处理和响应后处理。主程序读取需求文件、进行预处理、调用run_workflow执行工作流，最后进行后处理。
+
+- README.md: bella-issues-bot项目的中文README文件，详细介绍了项目简介、主要功能、记忆系统（日志管理、版本管理、文件记忆）、安装方法、配置选项和详细使用示例，还包含项目结构说明，全面展示了这个AI代码开发助手的功能和用法。
+
+- README.en.md: bella-issues-bot项目的英文README文件，介绍了项目概览、核心功能、记忆系统架构（LogManager、VersionManager和FileMemory）、安装方法和配置选项。重点说明了项目的两种工作模式和三大记忆组件的工作原理。
+
+- quick-start.md: bella-issues-bot项目的中文使用指南，详细介绍了个人开发助手模式和GitHub工作流集成的使用方法，包括安装步骤、文件记忆系统初始化、命令行参数和环境变量配置等内容，帮助用户快速上手该工具。
+
+- quick-start.en.md: bella-issues-bot项目的英文快速入门指南，简洁地介绍了基本设置、常见使用场景（个人助手和GitHub集成）、文件记忆系统操作、配置方法以及最佳实践，帮助英文用户迅速掌握工具的核心功能。
+
+
+# 文件内容
+
+
+
+```
+File: examples/advanced/requirements/feature_request.txt
+1 功能需求：实现文件上传系统
+2 
+3 需要开发一个文件上传模块，具有以下功能：
+4 1. 支持多文件同时上传
+5 2. 文件大小限制为50MB
+6 3. 支持的文件类型：PDF, DOCX, XLSX, JPG, PNG
+7 4. 文件存储在服务器本地，路径可配置
+8 5. 上传成功后返回文件的唯一标识符和访问URL
+9 6. 实现基本的文件类型验证和安全检查
+10
+```
+
+
+
+
+```
+File: examples/example_chat_process.py
+1 """
+2 这个示例展示如何使用ChatProcessor处理用户对话需求
+3 与example_generate.py不同之处在于：
+4 1. 不需要使用版本管理
+5 2. 使用ChatProcessor替代CodeEngineer
+6 """
+7 import logging
+8 import os
+9 
+10 from dotenv import load_dotenv
+11 
+12 from core.ai import AIConfig
+13 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+14 from core.file_memory import FileMemory, FileMemoryConfig
+15 from core.file_selector import FileSelector
+16 from core.git_manager import GitManager, GitConfig
+17 from core.log_config import setup_logging
+18 from core.log_manager import LogManager, LogConfig
+19 
+20 
+21 def main():
+22     setup_logging(log_level=logging.DEBUG)
+23     # 加载环境变量
+24     load_dotenv()
+25     
+26     # 创建工作目录
+27     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+28 
+29     issue_id = 5  # 使用一个新的issue_id
+30     
+31     # 初始化日志管理器
+32     log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
+33     log_manager = LogManager(config=log_config)
+34     current_round = log_manager.get_current_round()
+35 
+36     
+37     # 初始化Git管理器
+38     git_config = GitConfig(
+39         repo_path=project_dir
+40     )
+41     git_manager = GitManager(config=git_config)
+42 
+43     
+44     # 初始化AI助手
+45     ai_config = AIConfig(
+46         model_name="coder-model",
+47         temperature=1
+48     )
+49     
+50     current_requirement = '''
+51     请详细解释下工作流引擎(workflow_engine)在本项目中的作用，以及它是如何协调各个组件工作的
+52     '''
+53 
+54     if current_round > 1:
+55         file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
+56         file_memory.update_file_details()
+57 
+58     selector = FileSelector(
+59         project_dir,
+60         issue_id,
+61         ai_config=ai_config,
+62     )
+63 
+64     # 选择相关文件来提供上下文
+65     files = selector.select_files_for_requirement(current_requirement)
+66     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+67 
+68     # 使用ChatProcessor处理用户请求
+69     chat_config = ChatProcessorConfig(
+70         system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。"
+71     )
+72     chat_processor = ChatProcessor(ai_config=ai_config, log_manager=log_manager, config=chat_config)
+73     
+74     chat_processor.process_chat(current_requirement)
+75 
+76 
+77 if __name__ == "__main__":
+78     main()
+79
+```
+
+
+
+
+```
+File: examples/example_code_generate.py
+1 import logging
+2 import os
+3 
+4 from dotenv import load_dotenv
+5 
+6 from core.ai import AIConfig
+7 from core.code_engineer import CodeEngineerConfig, CodeEngineer
+8 from core.diff import Diff
+9 from core.file_memory import FileMemory, FileMemoryConfig
+10 from core.file_selector import FileSelector
+11 from core.git_manager import GitManager, GitConfig
+12 from core.log_config import setup_logging
+13 from core.log_manager import LogManager, LogConfig
+14 from core.prompt_generator import PromptGenerator, PromptData
+15 from core.version_manager import VersionManager
+16 
+17 
+18 def main():
+19     setup_logging(log_level=logging.DEBUG)
+20     # 加载环境变量
+21     load_dotenv()
+22     
+23     # 创建工作目录
+24     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+25 
+26     issue_id = 3
+27     
+28     # 初始化日志管理器
+29     log_config = LogConfig(project_dir=project_dir, issue_id=issue_id)
+30     log_manager = LogManager(config=log_config)
+31     current_round = log_manager.get_current_round()
+32 
+33     
+34     # 初始化Git管理器
+35     git_config = GitConfig(
+36         repo_path=project_dir
+37     )
+38     git_manager = GitManager(config=git_config)
+39     
+40     # 初始化AI助手
+41     ai_config = AIConfig(
+42         model_name="coder-model",
+43         temperature=1
+44     )
+45     
+46     # 初始化版本管理器
+47     version_manager = VersionManager(issue_id=issue_id, log_manager=log_manager, git_manager=git_manager, ai_config=ai_config)
+48 
+49     current_requirement = '''
+50     将 example_chat_process.py 和 example_code_generate.py的流程整合到 workflow_engine.py 中，目前两个代码文件都是写代码和回复用户的完整流程。
+51     使用DecisionEnvironment来决策选择何种模式。
+52     '''
+53     requirement, history = version_manager.ensure_version_and_generate_context(current_requirement)
+54 
+55     if current_round > 1:
+56         file_memory = FileMemory(config=FileMemoryConfig(git_manager=git_manager, ai_config=ai_config, project_dir=project_dir))
+57         file_memory.update_file_details()
+58 
+59     selector = FileSelector(
+60         project_dir,
+61         issue_id,
+62         ai_config=ai_config,
+63     )
+64 
+65     files = selector.select_files_for_requirement(requirement)
+66 
+67     descriptions = FileMemory.get_selected_file_descriptions(project_dir, files)
+68 
+69     data = PromptData(requirement=requirement, project_dir=project_dir, steps = history, files=files, file_desc=descriptions)
+70     user_prompt = PromptGenerator.generatePrompt(data)
+71     config = CodeEngineerConfig(project_dir=project_dir, ai_config=ai_config)
+72 
+73     engineer = CodeEngineer(config, LogManager(LogConfig(project_dir=project_dir, issue_id=issue_id)), Diff(AIConfig(temperature=0.1,
+74                                                                                                               model_name="gpt-4o")))
+75     engineer.process_prompt(prompt=user_prompt)
+76 
+77 
+78 if __name__ == "__main__":
+79     main()
+80
+```
+
+
+
+
+```
+File: examples/example_file_memory_client.py
+1 """
+2 Example demonstrating how to use the FileMemory client without LogManager.
+3 
+4 This example shows how to:
+5 1. Initialize FileMemory with only GitManager
+6 2. Update file descriptions
+7 3. Process previously failed files
+8 """
+9 
+10 import os
+11 import logging
+12 from pathlib import Path
+13 
+14 from dotenv import load_dotenv
+15 
+16 from client.file_memory_api import init_file_memory, update_file_descriptions, process_failed_files
+17 from core.log_config import setup_logging
+18 
+19 
+20 def main():
+21     # Setup logging
+22     setup_logging(log_level=logging.INFO)
+23     
+24     # Load environment variables
+25     load_dotenv()
+26     
+27     # Set project directory (this example uses the parent directory of this file)
+28     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+29     
+30     print(f"Initializing FileMemory for project: {project_dir}")
+31     
+32     # Initialize FileMemory using only GitManager (no LogManager)
+33     file_memory = init_file_memory(
+34         project_dir=project_dir,
+35         model_name="gpt-4o",
+36         temperature=0.7
+37     )
+38     
+39     # Update file descriptions
+40     print("Updating file descriptions...")
+41     update_file_descriptions(file_memory)
+42     
+43 
+44 if __name__ == "__main__":
+45     main()
+46
+```
+
+
+
+
+```
+File: examples/example_log_manager.py
+1 """
+2 这个示例展示如何使用LogManager进行日志管理，包括初始化、存档日志、检索日志和回滚操作
+3 """
+4 import os
+5 import sys
+6 from typing import List
+7 
+8 # 添加项目根目录到sys.path，确保可以导入core模块
+9 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+10 
+11 from core.diff import DiffInfo
+12 from core.log_manager import LogManager, LogConfig, LogEntry
+13 from core.log_config import setup_logging
+14 
+15 
+16 def print_separator(title: str):
+17     """打印分隔线和标题，使输出更易读"""
+18     print("\n" + "=" * 50)
+19     print(f"  {title}")
+20     print("=" * 50)
+21 
+22 
+23 def display_log_entries(entries: List[LogEntry]):
+24     """显示日志条目的主要信息"""
+25     for entry in entries:
+26         print(f"轮次 {entry.round_num} - {entry.timestamp}")
+27         print(f"  系统提示词 (前30字符): {entry.sys_prompt[:30]}...")
+28         print(f"  用户提示词 (前30字符): {entry.prompt[:30]}...")
+29         print(f"  响应内容 (前30字符): {entry.response[:30]}...")
+30         print(f"  修改的文件数量: {len(entry.modified_files)}")
+31         print("---")
+32 
+33 
+34 def main():
+35     """示例主函数，展示LogManager的各种用法"""
+36     # 设置日志
+37     setup_logging()
+38     
+39     # 创建工作目录 - 使用当前项目根目录
+40     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+41     issue_id = 999  # 使用一个示例issue_id
+42     
+43     print_separator("1. 初始化LogManager")
+44     # 初始化LogManager
+45     log_config = LogConfig(
+46         project_dir=project_dir,
+47         issue_id=issue_id,
+48         mode="client"  # 客户端模式
+49     )
+50     log_manager = LogManager(config=log_config)
+51     
+52     print(f"LogManager已初始化，当前轮次: {log_manager.get_current_round()}")
+53     print(f"日志路径: {log_manager.logs_path}")
+54     print(f"Issue日志路径: {log_manager.issues_path}")
+55     
+56     # 创建示例数据
+57     print_separator("2. 存档日志")
+58     
+59     # 示例提示和响应
+60     sys_prompt = "你是一个代码助手，帮助用户解决编程问题。"
+61     user_prompt = "请帮我实现一个简单的Python函数，用于计算两个数的最大公约数。"
+62     ai_response = """
+63     以下是计算最大公约数的Python函数:
+64     
+65     
+66
+```
+
+
+
+
+```
+File: examples/example_terminal.py
+1 """
+2 Example showing how to run the workflow from both terminal and programmatically.
+3 
+4 To run from terminal:
+5 python -m client.terminal --issue-id 42 --requirement "Create a README file"
+6 
+7 Or programmatically as shown below:
+8 """
+9 import logging
+10 
+11 from client.runner import run_workflow
+12 from core.log_config import setup_logging
+13 
+14 
+15 def example_run():
+16     """Example of running the workflow programmatically."""
+17     requirement = """
+18     Create a simple README file with project description and setup instructions.
+19     """
+20     
+21     run_workflow(issue_id=42, requirement=requirement)
+22 
+23 
+24 if __name__ == "__main__":
+25     setup_logging(log_level=logging.DEBUG)
+26     example_run()
+27
+```
+
+
+
+
+```
+File: examples/example_workflow.py
+1 """
+2 这个示例展示如何使用WorkflowEngine处理用户需求，自动决策是代码生成还是对话流程
+3 """
+4 import logging
+5 import os
+6 
+7 from dotenv import load_dotenv
+8 
+9 from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
+10 from core.log_config import setup_logging
+11 
+12 
+13 def main():
+14     setup_logging(log_level=logging.DEBUG)
+15     # 加载环境变量
+16     load_dotenv()
+17     
+18     # 创建工作目录
+19     project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
+20     issue_id = 5
+21     
+22     # 创建工作流引擎配置
+23     config = WorkflowEngineConfig(
+24         project_dir=project_dir,
+25         issue_id=issue_id,
+26         core_model="coder-model",
+27         data_model="gpt-4o",
+28         core_template=1,
+29         data_template=0.7,
+30         default_branch="dev"
+31     )
+32     
+33     # 初始化工作流引擎
+34     workflow_engine = WorkflowEngine(config)
+35 
+36     requirement = """
+37     分析项目的所有代码。把项目的Read.me进行完善。尤其是未完成的。
+38     """
+39     
+40     # 处理代码修改需求
+41     workflow_engine.process_requirement(requirement)
+42 
+43 if __name__ == "__main__":
+44     main()
+45
+```
+
+
+
+
+```
+File: examples/advanced/custom_workflow.py
+1 """
+2 高级示例：自定义工作流处理程序
+3 
+4 展示如何将bella-issues-bot集成到自定义应用程序中，
+5 包括自定义前处理和后处理逻辑。
+6 """
+7 
+8 import os
+9 from typing import Optional
+10 from client.runner import run_workflow
+11 
+12 
+13 def preprocess_requirement(raw_requirement: str) -> str:
+14     """
+15     预处理用户需求，增加额外的上下文信息
+16     
+17     Args:
+18         raw_requirement: 原始需求文本
+19         
+20     Returns:
+21         增强后的需求文本
+22     """
+23     # 例如：添加项目特定的规范或约束
+24     return f"{raw_requirement}\n\n注意：请确保代码遵循PEP 8规范，并包含适当的单元测试。"
+25 
+26 
+27 def postprocess_response(response: str) -> str:
+28     """
+29     处理AI响应，进行后期格式化或额外操作
+30     
+31     Args:
+32         response: AI生成的原始响应
+33         
+34     Returns:
+35         处理后的响应
+36     """
+37     # 例如：添加时间戳或标记
+38     from datetime import datetime
+39     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+40     return f"处理时间: {timestamp}\n\n{response}"
+41 
+42 
+43 # 示例使用
+44 if __name__ == "__main__":
+45     # 1. 读取并预处理需求
+46     with open("requirements/feature_request.txt", "r") as f:
+47         raw_requirement = f.read()
+48     
+49     enhanced_requirement = preprocess_requirement(raw_requirement)
+50     
+51     # 2. 运行工作流
+52     response = run_workflow(
+53         issue_id=301,
+54         requirement=enhanced_requirement,
+55         project_dir=os.getenv("PROJECT_DIR", "."),
+56         core_model=os.getenv("CORE_MODEL", "gpt-4o"),
+57         core_temperature=float(os.getenv("CORE_TEMP", "0.7"))
+58     )
+59     
+60     # 3. 后处理响应
+61     final_response = postprocess_response(response)
+62     
+63     print(final_response)
+64
+```
+
+
+
+
+```
+File: README.md
+1 # bella-issues-bot
+2 
+3 - [![Static Badge](https://img.shields.io/badge/deep-wiki-blue?style=flat-square)](https://deepwiki.com/bella-top/bella-issues-bot)
+4 - [![Static Badge](https://img.shields.io/badge/Bella-support-%23C76300?style=flat-square)](https://doc.bella.top/)
+5 
+6 中文 | [English](./README.en.md)
+7 
+8 ## 项目简介
+9 
+10 bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：
+11 
+12 1. **个人开发助手模式**：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。
+13 2. **GitHub自动化模式**：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。
+14 
+15 通过对项目结构的深入理解和强大的代码生成能力，bella-issues-bot 能够显著提高开发效率，减少重复工作，让您专注于更有创造性的任务。
+16 
+17 ## 主要功能
+18 
+19 - **需求分析**：自动理解和分解用户的功能需求，确定所需的代码修改
+20 - **代码生成**：根据需求生成符合项目风格的代码，自动实现新功能或修复问题
+21 - **版本管理**：与Git深度集成，支持分支创建、代码提交和拉取请求的自动管理
+22 - **记忆系统**：记录项目文件描述和操作历史，提供上下文感知能力，持续改进代码质量
+23 
+24 ### 典型使用场景
+25 
+26 - **日常开发辅助**：在本地开发过程中，使用命令行工具快速生成代码、解决技术问题
+27 - **项目自动化**：集成到GitHub工作流，实现Issue的自动处理和代码实现
+28 - **代码文档生成**：自动分析项目文件并生成详细的功能描述
+29 - **技术难题解决**：分析项目上下文后，针对性地提供解决方案
+30 
+31 ## 记忆与上下文管理
+32 
+33 bella-issues-bot 配备了强大的记忆系统，由三个核心组件构成：
+34 
+35 ### 记忆系统的工作流程
+36 
+37 1. **初始化阶段**：首次运行时，系统会扫描整个项目并为每个文件生成详细描述
+38 2. **增量更新**：后续运行时，只会更新新增或修改的文件描述，提高效率
+39 3. **上下文提取**：处理用户需求时，系统根据需求内容选择相关文件作为上下文
+40 
+41 ### 1. 日志管理 (LogManager)
+42 
+43 LogManager 负责记录每次交互的完整历史，包括：
+44 - 系统提示词和用户需求
+45 - AI响应内容
+46 - 文件修改记录和差异对比
+47 
+48 这些日志按issue和轮次组织，支持历史追溯和问题诊断。每轮交互都会生成详细日志，便于追踪AI的决策过程和代码修改历史。
+49 
+50 ### 2. 版本管理 (VersionManager)
+51 
+52 VersionManager 提供智能的版本控制功能：
+53 - 自动提取历史轮次的需求和响应
+54 - 生成格式化的历史执行记录作为上下文
+55 - 分析当前需求与历史需求的关系
+56 - 根据需要执行版本回退操作
+57 
+58 系统会分析新需求与先前修改的关系，判断是否需要回滚，确保代码修改的连贯性和一致性。
+59 
+60 ### 3. 文件记忆 (FileMemory)
+61 
+62 FileMemory 模块为项目的每个文件维护详细描述：
+63 - 自动生成文件功能、结构和关系描述
+64 - 跟踪文件变更，更新受影响文件的描述
+65 - 提供上下文相关的文件选择
+66 - 支持配置忽略文件，默认包含项目的.gitignore，支持自定义添加.eng/.engignore
+67 
+68 这使得AI助手能够理解整个代码库的结构和功能，在修改代码时考虑到更广泛的项目上下文。
+69 
+70 ## 安装方法
+71 
+72 ### 通过 pip 安装
+73 
+74 ```bash
+75 pip install bella-issues-bot
+76 ```
+77 
+78 ### 从源码安装
+79 
+80 ```bash
+81 git clone https://github.com/szl97/bella-issues-bot.git
+82 cd bella-issues-bot
+83 pip install -e .
+84 ```
+85 
+86 ## 系统要求
+87 
+88 - Python 3.10 或更高版本（<3.13）
+89 - Git 客户端（用于版本控制功能）
+90 - OpenAI API 密钥（用于 AI 功能）
+91 
+92 ## 配置文件
+93 
+94 bella-issues-bot 支持多种配置方式：
+95 
+96 ### 环境变量配置
+97 
+98 工具会读取以下环境变量：
+99 
+100 - `OPENAI_API_KEY`: OpenAI API密钥（必需）
+101 - `OPENAI_API_BASE`: OpenAI API基础URL（可选，用于自定义API端点）
+102 - `GITHUB_REMOTE_URL`: GitHub远程仓库URL（可选，用于GitHub集成）
+103 - `GITHUB_TOKEN`: GitHub身份验证令牌（可选，用于GitHub集成）
+104 
+105 ### 项目配置文件
+106 
+107 
+108 - `.eng/system.txt`: 配置代码工程师的提示词
+109 - `.eng/.engignore`: 类似于 `.gitignore`，用于指定文件记忆系统应忽略的文件
+110 
+111 示例 `.engignore` 文件:
+112 ```
+113 # 忽略所有日志文件
+114 *.log
+115 
+116 # 忽略构建目录
+117 /build/
+118 /dist/
+119 
+120 # 忽略虚拟环境
+121 /venv/
+122 /.venv/
+123 
+124 # 忽略缓存文件
+125 __pycache__/
+126 *.py[cod]
+127 *$py.class
+128 ```
+129 
+130 ## 详细使用示例
+131 
+132 ### 0. 进入您的项目目录
+133 
+134 ### 1. 初始化文件记忆系统
+135 
+136 首次使用前，建议初始化文件记忆系统，这将帮助 AI 理解您的项目结构：
+137 
+138 ```bash
+139 # 在项目根目录执行
+140 bella-file-memory --project-dir .
+141 ```
+142 
+143 这将分析您的项目文件并生成描述信息，存储在 `.eng/memory/file_details.txt` 中。
+144 
+145 ### 2. 作为个人开发助手使用
+146 
+147 ```bash
+148 # 基本使用
+149 bella-issues-bot --issue-id 123 --requirement "实现一个新的日志记录功能"
+150 
+151 # 使用自定义模型和温度
+152 bella-issues-bot --issue-id 123 --requirement "优化文件读取性能" --core-model gpt-4o --core-temperature 0.5
+153 ```
+154 
+155 ### 3. 设置 GitHub 工作流
+156 
+157 为您的项目生成 GitHub Actions 工作流配置：
+158 
+159 ```bash
+160 # 生成默认工作流配置
+161 bella-github-workflows
+162 
+163 # 自定义基础分支和模型
+164 bella-github-workflows --base-branch develop --model gpt-4o
+165 ```
+166 
+167 生成的工作流文件将保存在 `.github/workflows/` 目录中。
+168 
+169 ### 4. 使用编程 API
+170 
+171 ```python
+172 from client.runner import run_workflow
+173 
+174 # 基本使用
+175 run_workflow(
+176     issue_id=123,
+177     requirement="添加单元测试覆盖核心功能",
+178     project_dir="./my_project"
+179 )
+180 
+181 # 高级配置
+182 run_workflow(
+183     issue_id=123,
+184     requirement="重构数据处理模块以提高性能",
+185     project_dir="./my_project",
+186     core_model="gpt-4o",
+187     data_model="gpt-4o",
+188     core_temperature=0.7,
+189     data_temperature=0.5,
+190     mode="client",  # 或 "bot" 用于 GitHub 自动化
+191     max_retry=5
+192 )
+193 ```
+194 
+195 ## 项目结构
+196 
+197 ```
+198 bella-issues-bot/
+199 ├── core/               # 核心功能模块
+200 │   ├── ai.py           # AI 助手接口
+201 │   ├── file_memory.py  # 文件记忆系统
+202 │   ├── git_manager.py  # Git 版本控制
+203 │   └── workflow_engine.py  # 工作流引擎
+204 ├── client/             # 客户端接口
+205 │   ├── terminal.py     # 命令行界面
+206 │   ├── file_memory_client.py  # 文件记忆客户端
+207 │   └── github_workflow_generator.py  # GitHub 工作流生成器
+208 └── examples/           # 使用示例
+209 ```
+210
+```
+
+
+
+
+```
+File: README.en.md
+1 # bella-issues-bot
+2 
+3 - [![Static Badge](https://img.shields.io/badge/deep-wiki-blue?style=flat-square)](https://deepwiki.com/bella-top/bella-issues-bot)
+4 - [![Static Badge](https://img.shields.io/badge/Bella-support-%23C76300?style=flat-square)](https://doc.bella.top/)
+5 
+6 English | [中文](./README.md)
+7 
+8 ## Project Overview
+9 
+10 bella-issues-bot is an AI-powered multifunctional code development assistant that operates in two powerful modes:
+11 
+12 1. **Personal Development Assistant Mode**: Acts as a command-line tool during daily development, helping analyze code, generate implementations, and solve technical challenges.
+13 2. **GitHub Automation Mode**: Integrates into GitHub workflows, automatically monitoring and handling project issues, analyzing requirements, proposing solutions, and implementing code changes without manual intervention.
+14 
+15 Through its deep understanding of project structure and powerful code generation capabilities, bella-issues-bot significantly improves development efficiency, reduces repetitive work, and lets you focus on more creative tasks.
+16 
+17 ## Key Features
+18 
+19 - **Requirement Analysis**: Automatically understands and breaks down user requirements to determine necessary code changes
+20 - **Code Generation**: Generates code that matches project style, automatically implementing new features or fixing issues
+21 - **Version Control**: Deep Git integration, supporting automated branch creation, code commits, and pull request management
+22 - **Memory System**: Records project file descriptions and operation history, providing context-aware capabilities and continuous code quality improvement
+23 
+24 ### Typical Use Cases
+25 
+26 - **Daily Development Support**: Use command-line tools for quick code generation and technical problem-solving
+27 - **Project Automation**: Integrate with GitHub workflows for automated issue handling and code implementation
+28 - **Code Documentation Generation**: Automatically analyze project files and generate detailed functional descriptions
+29 - **Technical Problem Resolution**: Provide targeted solutions after analyzing project context
+30 
+31 ## Memory and Context Management
+32 
+33 bella-issues-bot features a powerful memory system consisting of three core components:
+34 
+35 ### Memory System Workflow
+36 
+37 1. **Initialization Phase**: On first run, the system scans the entire project and generates detailed descriptions for each file
+38 2. **Incremental Updates**: Subsequently, only updates descriptions for new or modified files, improving efficiency
+39 3. **Context Extraction**: When processing user requirements, the system selects relevant files as context based on requirement content
+40 
+41 ### 1. Log Management (LogManager)
+42 
+43 LogManager records complete interaction history, including:
+44 - System prompts and user requirements
+45 - AI responses
+46 - File modification records and diff comparisons
+47 
+48 Logs are organized by issue and iteration, supporting historical tracking and problem diagnosis.
+49 
+50 ### 2. Version Management (VersionManager)
+51 
+52 VersionManager provides intelligent version control features:
+53 - Automatically extracts requirements and responses from historical iterations
+54 - Generates formatted execution history as context
+55 - Analyzes relationships between current and historical requirements
+56 - Performs version rollbacks as needed
+57 
+58 ### 3. File Memory (FileMemory)
+59 
+60 FileMemory module maintains detailed descriptions for each project file:
+61 - Automatically generates file functionality, structure, and relationship descriptions
+62 - Tracks file changes and updates affected file descriptions
+63 - Provides context-aware file selection
+64 - Supports ignored files configuration, includes project's .gitignore by default, and supports custom .eng/.engignore
+65 
+66 ## Installation
+67 
+68 ### Via pip
+69 
+70 ```bash
+71 pip install bella-issues-bot
+72 ```
+73 
+74 ### From Source
+75 
+76 ```bash
+77 git clone https://github.com/szl97/bella-issues-bot.git
+78 cd bella-issues-bot
+79 pip install -e .
+80 ```
+81 
+82 ## System Requirements
+83 
+84 - Python 3.10 or higher (< 3.13)
+85 - Git client (for version control features)
+86 - OpenAI API key (for AI functionality)
+87 
+88 ## Configuration
+89 
+90 bella-issues-bot supports multiple configuration methods:
+91 
+92 ### Environment Variables
+93 
+94 The tool reads the following environment variables:
+95 
+96 - `OPENAI_API_KEY`: OpenAI API key (required)
+97 - `OPENAI_API_BASE`: OpenAI API base URL (optional, for custom API endpoints)
+98 - `GITHUB_REMOTE_URL`: GitHub repository URL (optional, for GitHub integration)
+99 - `GITHUB_TOKEN`: GitHub authentication token (optional, for GitHub integration)
+100 
+101 ### Project Configuration Files
+102 
+103 - `.eng/system.txt`: Configure code engineer prompts
+104 - `.eng/.engignore`: Similar to `.gitignore`, specifies files to be ignored by the memory system
+105 
+106 Example `.engignore` file:
+107 ```
+108 # Ignore all log files
+109 *.log
+110 
+111 # Ignore build directories
+112 /build/
+113 /dist/
+114 
+115 # Ignore virtual environments
+116 /venv/
+117 /.venv/
+118 
+119 # Ignore cache files
+120 __pycache__/
+121 *.py[cod]
+122 *$py.class
+123 ```
+124 
+125 For detailed usage examples and project structure, please refer to the QUICK-START.md guide.
+```
+
+
+
+
+```
+File: quick-start.md
+1 # bella-issues-bot 使用指南
+2 
+3 中文 | [English](./quick-start.en.md)
+4 
+5 在GitHub上使用bella-issues-bot项目，您可以执行以下主要操作：
+6 
+7 ## 1. 作为个人开发助手
+8 
+9 ### 安装项目
+10 ```bash
+11 # 通过pip安装
+12 pip install bella-issues-bot
+13 
+14 # 或从源码安装
+15 git clone https://github.com/szl97/bella-issues-bot.git
+16 cd bella-issues-bot
+17 pip install -e .
+18 ```
+19 
+20 ### 初始化文件记忆系统
+21 ```bash
+22 # 分析您的项目文件并生成描述信息
+23 bella-file-memory --project-dir ./your-project
+24 ```
+25 
+26 ### 使用AI助手处理需求
+27 ```bash
+28 # 基本使用 - 提出问题或请求代码修改
+29 bella-issues-bot --issue-id 123 --requirement "实现一个新的日志记录功能"
+30 
+31 # 自定义模型和温度
+32 bella-issues-bot --issue-id 123 --requirement "优化文件读取性能" --core-model gpt-4o --core-temperature 0.5
+33 ```
+34 
+35 ## 2. 集成GitHub工作流
+36 
+37 ### 生成GitHub Actions工作流配置
+38 ```bash
+39 # 生成默认配置
+40 bella-github-workflows
+41 
+42 # 自定义基础分支和模型
+43 bella-github-workflows --base-branch develop --model gpt-4o
+44 ```
+45 
+46 这将在`.github/workflows/`目录中创建两个工作流文件：
+47 - `memory_init.yml` - 自动分析项目文件并维护文件记忆
+48 - `issue_process.yml` - 自动处理Issue中的需求
+49 
+50 ### 配置GitHub仓库权限
+51 
+52 在仓库的Settings中设置：
+53 1. 添加必要的Secrets（`OPENAI_API_KEY`）
+54 2. 启用Actions的读写权限和PR创建权限
+55 
+56 ## 3. 使用GitHub Issues获取AI协助
+57 
+58 一旦集成了GitHub工作流，您可以：
+59 
+60 1. 创建一个新Issue描述您的需求
+61 2. AI助手会自动：
+62     - 分析您的需求
+63     - 在专用分支上实现代码
+64     - 创建拉取请求
+65     - 在Issue中回复处理结果
+66 
+67 ## 4. 使用编程API
+68 
+69 在Python代码中使用：
+70 
+71 ```python
+72 from client.runner import run_workflow
+73 
+74 # 处理需求并生成代码
+75 run_workflow(
+76     issue_id=123,
+77     requirement="添加单元测试覆盖核心功能",
+78     project_dir="./my_project",
+79     core_model="gpt-4o"
+80 )
+81 ```
+82 
+83 ## 5. 配置项目
+84 
+85 ### 环境变量设置
+86 ```
+87 OPENAI_API_KEY=your_api_key
+88 OPENAI_API_BASE=https://api.openai.com/v1  # 可选，自定义API端点
+89 GITHUB_REMOTE_URL=https://github.com/username/repo.git  # 用于GitHub集成
+90 GITHUB_TOKEN=your_github_token  # 用于GitHub集成
+91 ```
+92 
+93 ### 项目配置文件
+94 - `.eng/system.txt` - 自定义AI提示词
+95 - `.eng/.engignore` - 类似`.gitignore`，指定记忆系统应忽略的文件
+96 
+97 bella-issues-bot提供了强大的AI代码开发助手功能，无论是作为个人开发工具还是GitHub自动化机器人，都能显著提高开发效率，减少重复工作。
+```
+
+
+
+
+```
+File: quick-start.en.md
+1 # Quick Start Guide
+2 
+3 English | [中文](./quick-start.md)
+4 
+5 This guide provides essential information to get started with bella-issues-bot quickly.
+6 
+7 ## Basic Setup
+8 
+9 1. Install the package:
+10 ```bash
+11 pip install bella-issues-bot
+12 ```
+13 
+14 2. Set up environment variables:
+15 ```bash
+16 export OPENAI_API_KEY="your-api-key"
+17 ```
+18 
+19 ## Common Use Cases
+20 
+21 ### 1. Personal Development Assistant
+22 
+23 Use bella-issues-bot as your coding assistant:
+24 
+25 ```bash
+26 # Generate code implementation
+27 bella-issues-bot --requirement "Create a function to calculate fibonacci numbers"
+28 
+29 # Analyze existing code
+30 bella-issues-bot --requirement "Review and optimize this function" --file path/to/file.py
+31 
+32 # Fix bugs
+33 bella-issues-bot --requirement "Fix the memory leak in this module" --file path/to/module.py
+34 ```
+35 
+36 ### 2. GitHub Integration
+37 
+38 1. Create `.github/workflows/bella-bot.yml`:
+39 
+40 ```yaml
+41 name: Bella Issues Bot
+42 on:
+43   issues:
+44     types: [opened, edited]
+45 
+46 jobs:
+47   process-issue:
+48     runs-on: ubuntu-latest
+49     steps:
+50       - uses: actions/checkout@v2
+51       - name: Run Bella Issues Bot
+52         env:
+53           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+54           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+55         run: |
+56           pip install bella-issues-bot
+57           bella-issues-bot --mode github
+58 ```
+59 
+60 2. Add repository secrets:
+61    - Go to repository Settings > Secrets
+62    - Add your `OPENAI_API_KEY`
+63 
+64 ### 3. File Memory System
+65 
+66 Initialize the file memory system for better context awareness:
+67 
+68 ```bash
+69 # Initialize file memory
+70 bella-file-memory --project-dir .
+71 
+72 # Update file memory after changes
+73 bella-file-memory --project-dir . --update
+74 ```
+75 
+76 ### 4. Configuration
+77 
+78 Create `.eng/.engignore` to exclude files from analysis:
+79 
+80 ```
+81 # Example .engignore
+82 node_modules/
+83 dist/
+84 *.log
+85 ```
+86 
+87 ## Common Parameters
+88 
+89 - `--requirement`: The task or requirement description
+90 - `--mode`: Operation mode (`client` or `github`)
+91 - `--core-model`: AI model to use (default: gpt-4)
+92 - `--core-temperature`: Model temperature (default: 0.7)
+93 - `--project-dir`: Project directory path
+94 
+95 ## Best Practices
+96 
+97 1. **Clear Requirements**: Write clear, specific requirements for better results
+98 2. **File Memory**: Initialize file memory before first use
+99 3. **Version Control**: Always work in a clean git repository
+100 4. **Context**: Provide relevant file paths when needed
+101 5. **Regular Updates**: Keep the tool and file memory system updated
+```
+
+
+
+
+# 历史执行信息
+
+【round_1】
+requirement: 
+为LogManager写一个example
+agent_response: 
+I'll create an example file that demonstrates how to use the LogManager class from the core/log_manager.py file. This example will show different use cases of the LogManager functionality, including initializing the manager, archiving logs, retrieving log entries, and performing rollbacks.
+
+Let's start by analyzing what we need:
+
+1. Create an example file that demonstrates how to use LogManager
+2. Include different use cases: initialization, archiving logs, retrieving logs, and rollbacks
+3. Make the example easy to understand and educational
+4. Ensure it follows the project structure and coding conventions
+
+Here's my implementation:
+
+```diff
+--- /dev/null
++++ examples/example_log_manager.py
+@@ -0,0 +1,104 @@
++"""
++这个示例展示如何使用LogManager进行日志管理，包括初始化、存档日志、检索日志和回滚操作
++"""
++import os
++import sys
++from typing import List
++
++# 添加项目根目录到sys.path，确保可以导入core模块
++sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
++
++from core.diff import DiffInfo
++from core.log_manager import LogManager, LogConfig, LogEntry
++from core.log_config import setup_logging
++
++
++def print_separator(title: str):
++    """打印分隔线和标题，使输出更易读"""
++    print("\n" + "=" * 50)
++    print(f"  {title}")
++    print("=" * 50)
++
++
++def display_log_entries(entries: List[LogEntry]):
++    """显示日志条目的主要信息"""
++    for entry in entries:
++        print(f"轮次 {entry.round_num} - {entry.timestamp}")
++        print(f"  系统提示词 (前30字符): {entry.sys_prompt[:30]}...")
++        print(f"  用户提示词 (前30字符): {entry.prompt[:30]}...")
++        print(f"  响应内容 (前30字符): {entry.response[:30]}...")
++        print(f"  修改的文件数量: {len(entry.modified_files)}")
++        print("---")
++
++
++def main():
++    """示例主函数，展示LogManager的各种用法"""
++    # 设置日志
++    setup_logging()
++    
++    # 创建工作目录 - 使用当前项目根目录
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
++    issue_id = 999  # 使用一个示例issue_id
++    
++    print_separator("1. 初始化LogManager")
++    # 初始化LogManager
++    log_config = LogConfig(
++        project_dir=project_dir,
++        issue_id=issue_id,
++        mode="client"  # 客户端模式
++    )
++    log_manager = LogManager(config=log_config)
++    
++    print(f"LogManager已初始化，当前轮次: {log_manager.get_current_round()}")
++    print(f"日志路径: {log_manager.logs_path}")
++    print(f"Issue日志路径: {log_manager.issues_path}")
++    
++    # 创建示例数据
++    print_separator("2. 存档日志")
++    
++    # 示例提示和响应
++    sys_prompt = "你是一个代码助手，帮助用户解决编程问题。"
++    user_prompt = "请帮我实现一个简单的Python函数，用于计算两个数的最大公约数。"
++    ai_response = """
++    以下是计算最大公约数的Python函数:
++    
++    ```python
++    def gcd(a, b):
++        while b:
++            a, b = b, a % b
++        return a
++    ```
++    
++    这个函数使用欧几里德算法计算两个数的最大公约数。
++    """
++    
++    # 示例文件修改
++    diff_info = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n",
++        new_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1 +1,6 @@\n # Math utilities\n+\n+def gcd(a, b):\n+    while b:\n+        a, b = b, a % b\n+    return a\n"
++    )
++    
++    # 存档日志
++    log_path = log_manager.archive_logs(
++        sys_prompt=sys_prompt,
++        prompt=user_prompt,
++        response=ai_response,
++        diff_infos=[diff_info]
++    )
++    print(f"日志已存档到: {log_path}")
++    
++    print_separator("3. 获取日志条目")
++    log_entries = log_manager.get_issue_log_entries(include_diff=True)
++    print(f"找到 {len(log_entries)} 条日志条目")
++    display_log_entries(log_entries)
++    
++    print_separator("4. 获取特定轮次的日志条目")
++    round_entry = log_manager.get_issue_round_log_entry(round_num=1, include_diff=True)
++    if round_entry:
++        print(f"轮次 {round_entry.round_num} 的日志条目")
++        print(f"修改的文件: {[diff.file_path for diff in round_entry.modified_files]}")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+```diff
+--- /dev/null
++++ requirements.txt
+@@ -0,0 +4 @@
++pydantic>=2.0.0
++python-dotenv>=1.0.0
++gitpython>=3.1.0
++openai>=1.0.0
+```
+
+This example demonstrates the following LogManager functionalities:
+
+1. **Initialization**: Setting up the LogManager with proper configuration, including project directory and issue ID.
+2. **Archiving Logs**: Shows how to archive system prompts, user prompts, AI responses, and file modifications.
+3. **Retrieving Log Entries**: Demonstrates how to retrieve all log entries for a specific issue.
+4. **Retrieving Specific Round**: Shows how to get a log entry for a specific round.
+
+The example is organized with clear sections separated by visual dividers to make the output more readable. It also includes helper functions to display log entries in a structured format.
+
+Note that this example doesn't demonstrate the rollback functionality directly (to avoid actually rolling back files in a real project), but it shows how to access the necessary functions and information that would be required for such operations.
+
+When executed, this example will create actual log entries in your project's `.eng/memory/queries/#999` directory, serving as a practical demonstration of how LogManager stores information.
+
+This concludes a fully working implementation.
+
+
+
+# 用户需求
+
+增加一下使用的示例数据

@@ -30,13 +30,14 @@ examples/advanced/requirements/feature_request.txt:这是一个需求文档，�
 examples/example_chat_process.py:聊天处理流程示例，展示如何使用ChatProcessor处理用户对话需求。与代码生成示例不同，不使用版本管理，主要演示如何回答用户关于项目的问题。
 examples/example_code_generate.py:代码生成流程示例，展示如何使用CodeEngineer处理代码修改需求。演示了从需求分析到代码生成和提交的完整流程，包含main函数作为入口点。
 examples/example_file_memory_client.py:示例文件，演示如何在不使用LogManager的情况下使用FileMemory客户端。展示初始化FileMemory（仅用GitManager）、更新文件描述以及处理失败文件的流程。包含main函数作为入口点。
+examples/example_log_manager.py:这个文件是一个示例代码，展示了如何使用LogManager进行日志管理。主要功能包括初始化、存档日志、检索日志和回滚操作。包含的关键类或函数有LogManager、LogConfig、LogEntry以及setup_logging等。与core模块中的diff、log_manager、log_config等文件交互明显。
 examples/example_terminal.py:展示如何以编程方式运行工作流的示例文件。包含example_run函数，演示了如何使用client.runner中的run_workflow函数处理简单需求。同时提供了命令行运行的示例说明。
 examples/example_workflow.py:WorkflowEngine使用示例，演示如何配置和初始化工作流引擎处理用户需求。创建WorkflowEngineConfig配置，设置项目目录、模型参数等，调用process_requirement方法处理需求。作为框架使用的入门示例。
 pyproject.toml:项目配置文件，定义了bella-issues-bot项目的元数据、依赖和工具配置。包含poetry构建配置、依赖包列表、命令行入口点以及代码格式化工具设置。为项目提供基础构建和开发环境配置。
 quick-start.en.md:bella-issues-bot项目的英文快速入门指南，简洁地介绍了基本设置、常见使用场景（个人助手和GitHub集成）、文件记忆系统操作、配置方法以及最佳实践，帮助英文用户迅速掌握工具的核心功能。
 quick-start.md:bella-issues-bot项目的中文使用指南，详细介绍了个人开发助手模式和GitHub工作流集成的使用方法，包括安装步骤、文件记忆系统初始化、命令行参数和环境变量配置等内容，帮助用户快速上手该工具。
+requirements.txt:这个文件列出了项目的Python依赖库及其版本要求，包括pydantic、python-dotenv、gitpython和openai等库，确保项目环境的正确配置。
 scripts/generate_workflows.sh:Bash脚本，为bella-issues-bot集成提供命令行接口，包含帮助信息展示和参数传递功能。该脚本最终调用Python模块client.github_workflow_generator来实际生成工作流文件，支持设置输出目录、分支名称和模型参数等选项。
 scripts/init_file_memory.sh:一个Bash脚本，作为client/file_memory_client.py的命令行包装器。提供了简化的接口来运行文件记忆初始化，支持设置项目目录、AI模型、温度等参数。包含帮助信息展示功能，并将所有命令行参数传递给Python模块。
 scripts/run_bot.sh:启动bella-issues-bot的Bash帮助脚本，简化命令行参数输入。提供简化的参数选项，支持设置模型名称、温度等参数，并调用Python客户端模块。
-system.txt:AI系统提示词配置文件，指导AI如何编写代码，包含代码输出格式要求、diff语法规范和最佳实践指南，是AI代码生成的指导原则。
 tests/test_git_manager.py:测试文件，用于验证GitManager类的各种功能。包含多个测试函数，测试内容涵盖分支创建、提交、推送、克隆、拉取、添加Issue评论等Git操作。测试使用环境变量配置与真实GitHub仓库交互。

@@ -1,0 +1,217 @@
+I'll create an enhanced version of the `example_log_manager.py` that includes more complete example data and demonstrates the rollback functionality. Let me implement this:
+
+```diff
+--- examples/example_log_manager.py
++++ examples/example_log_manager.py
+@@ -62,7 +62,27 @@
+     # 示例提示和响应
+     sys_prompt = "你是一个代码助手，帮助用户解决编程问题。"
+     user_prompt = "请帮我实现一个简单的Python函数，用于计算两个数的最大公约数。"
+-    ai_response = """
++    ai_response = """
++    以下是计算最大公约数的Python函数:
++    
++    ```python
++    def gcd(a, b):
++        while b:
++            a, b = b, a % b
++        return a
++    ```
++    
++    这个函数使用欧几里德算法计算两个数的最大公约数。
++    """
++    
++    # 示例文件修改
++    diff_info = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n",
++        new_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1 +1,6 @@\n # Math utilities\n+\n+def gcd(a, b):\n+    while b:\n+        a, b = b, a % b\n+    return a\n"
++    )
++    
++    # 存档日志
++    log_path = log_manager.archive_logs(
++        sys_prompt=sys_prompt,
++        prompt=user_prompt,
++        response=ai_response,
++        diff_infos=[diff_info]
++    )
++    print(f"日志已存档到: {log_path}")
++    
++    # 创建第二轮对话的示例数据
++    print_separator("2.1 存档第二轮日志")
++    
++    sys_prompt_round2 = "你是一个代码助手，帮助用户解决编程问题。"
++    user_prompt_round2 = "请为刚才的GCD函数添加类型注解和文档字符串。"
++    ai_response_round2 = """
+     以下是计算最大公约数的Python函数:
+     
+     ```python
+@@ -70,24 +90,49 @@
+         while b:
+             a, b = b, a % b
+         return a
++    
++    # 添加类型注解和文档字符串的改进版本:
++    def gcd(a: int, b: int) -> int:
++        """
++        使用欧几里德算法计算两个整数的最大公约数。
++        
++        Args:
++            a: 第一个整数
++            b: 第二个整数
++            
++        Returns:
++            a和b的最大公约数
++        """
++        while b:
++            a, b = b, a % b
++        return a
+     ```
+     
+-    这个函数使用欧几里德算法计算两个数的最大公约数。
++    添加了类型注解和详细的文档字符串，使函数更易于理解和使用。
+     """
+     
+-    # 示例文件修改
+-    diff_info = DiffInfo(
+-        file_path="math_utils.py",
+-        original_content="# Math utilities\n",
+-        new_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
+-        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1 +1,6 @@\n # Math utilities\n+\n+def gcd(a, b):\n+    while b:\n+        a, b = b, a % b\n+    return a\n"
++    # 第二轮的文件修改
++    diff_info_round2 = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n",
++        new_content="# Math utilities\n\ndef gcd(a: int, b: int) -> int:\n    \"\"\"\n    使用欧几里德算法计算两个整数的最大公约数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最大公约数\n    \"\"\"\n    while b:\n        a, b = b, a % b\n    return a\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -1,6 +1,16 @@\n # Math utilities\n\n-def gcd(a, b):\n+def gcd(a: int, b: int) -> int:\n+    \"\"\"\n+    使用欧几里德算法计算两个整数的最大公约数。\n+    \n+    Args:\n+        a: 第一个整数\n+        b: 第二个整数\n+        \n+    Returns:\n+        a和b的最大公约数\n+    \"\"\"\n     while b:\n         a, b = b, a % b\n     return a\n"
+     )
+     
+-    # 存档日志
+-    log_path = log_manager.archive_logs(
+-        sys_prompt=sys_prompt,
+-        prompt=user_prompt,
+-        response=ai_response,
+-        diff_infos=[diff_info]
++    # 存档第二轮日志
++    log_path_round2 = log_manager.archive_logs(
++        sys_prompt=sys_prompt_round2,
++        prompt=user_prompt_round2,
++        response=ai_response_round2,
++        diff_infos=[diff_info_round2]
+     )
+-    print(f"日志已存档到: {log_path}")
++    print(f"第二轮日志已存档到: {log_path_round2}")
++    
++    # 创建第三轮对话的示例数据 - 新的函数添加
++    print_separator("2.2 存档第三轮日志")
++    
++    sys_prompt_round3 = "你是一个代码助手，帮助用户解决编程问题。"
++    user_prompt_round3 = "请添加一个新的函数计算最小公倍数(LCM)，使用之前的GCD函数。"
++    ai_response_round3 = """
++    我将添加一个计算最小公倍数的函数，利用GCD函数和以下公式：lcm(a,b) = a*b / gcd(a,b)
++    
++    ```python
++    def lcm(a: int, b: int) -> int:
++        """
++        计算两个整数的最小公倍数。
++        
++        Args:
++            a: 第一个整数
++            b: 第二个整数
++            
++        Returns:
++            a和b的最小公倍数
++        """
++        return abs(a * b) // gcd(a, b) if a and b else 0
++    ```
++    
++    这个函数使用了GCD函数来高效计算最小公倍数，并处理了零值的边缘情况。
++    """
++    
++    # 第三轮的文件修改
++    diff_info_round3 = DiffInfo(
++        file_path="math_utils.py",
++        original_content="# Math utilities\n\ndef gcd(a: int, b: int) -> int:\n    \"\"\"\n    使用欧几里德算法计算两个整数的最大公约数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最大公约数\n    \"\"\"\n    while b:\n        a, b = b, a % b\n    return a\n",
++        new_content="# Math utilities\n\ndef gcd(a: int, b: int) -> int:\n    \"\"\"\n    使用欧几里德算法计算两个整数的最大公约数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最大公约数\n    \"\"\"\n    while b:\n        a, b = b, a % b\n    return a\n\n\ndef lcm(a: int, b: int) -> int:\n    \"\"\"\n    计算两个整数的最小公倍数。\n    \n    Args:\n        a: 第一个整数\n        b: 第二个整数\n        \n    Returns:\n        a和b的最小公倍数\n    \"\"\"\n    return abs(a * b) // gcd(a, b) if a and b else 0\n",
++        diff_content="--- math_utils.py\n+++ math_utils.py\n@@ -13,3 +13,14 @@\n     while b:\n         a, b = b, a % b\n     return a\n+\n+\n+def lcm(a: int, b: int) -> int:\n+    \"\"\"\n+    计算两个整数的最小公倍数。\n+    \n+    Args:\n+        a: 第一个整数\n+        b: 第二个整数\n+        \n+    Returns:\n+        a和b的最小公倍数\n+    \"\"\"\n+    return abs(a * b) // gcd(a, b) if a and b else 0\n"
++    )
++    
++    # 存档第三轮日志
++    log_path_round3 = log_manager.archive_logs(
++        sys_prompt=sys_prompt_round3,
++        prompt=user_prompt_round3,
++        response=ai_response_round3,
++        diff_infos=[diff_info_round3]
++    )
++    print(f"第三轮日志已存档到: {log_path_round3}")
+@@ -98,8 +143,41 @@
+     print(f"找到 {len(log_entries)} 条日志条目")
+     display_log_entries(log_entries)
+     
+-    print_separator("4. 获取特定轮次的日志条目")
++    print_separator("4. 获取特定轮次的详细日志")
+     round_entry = log_manager.get_issue_round_log_entry(round_num=1, include_diff=True)
++    display_round_info(round_entry)
++    
++    round_entry2 = log_manager.get_issue_round_log_entry(round_num=2, include_diff=True)
++    display_round_info(round_entry2)
++    
++    print_separator("5. 演示回滚操作")
++    print("假设我们想回滚到第一轮结束的状态（在添加类型注解之前）")
++    
++    # 模拟回滚前后的状态
++    print("\n当前状态 (第三轮后):")
++    print("math_utils.py 包含 GCD 和 LCM 两个函数")
++    
++    print("\n回滚到第一轮后的预期状态:")
++    print("math_utils.py 只包含原始的 GCD 函数，没有类型注解和文档字符串")
++    
++    # 在实际应用中，您可以使用以下代码执行回滚
++    # log_manager.rollback_to_round(1)
++    print("\n说明: 实际回滚操作未执行，因为这可能会影响您的项目文件")
++    print("使用 log_manager.rollback_to_round(round_num) 执行实际回滚")
++
++
++def display_round_info(round_entry):
++    """显示特定轮次的详细信息"""
+     if round_entry:
+         print(f"轮次 {round_entry.round_num} 的日志条目")
+-        print(f"修改的文件: {[diff.file_path for diff in round_entry.modified_files]}")
++        print(f"时间戳: {round_entry.timestamp}")
++        print(f"修改的文件: {[diff.file_path for diff in round_entry.modified_files]}")
++        
++        # 显示每个修改文件的差异
++        for diff in round_entry.modified_files:
++            print(f"\n文件: {diff.file_path} 的修改:")
++            print(f"差异内容片段: \n{diff.diff_content[:200]}..." if len(diff.diff_content) > 200 
++                  else f"差异内容: \n{diff.diff_content}")
++    else:
++        print(f"未找到指定轮次的日志条目")
+```
+
+This enhanced version of the example includes:
+
+1. **Multiple Rounds of Logs**: Now demonstrates archiving logs for three complete rounds of interaction:
+   - Round 1: Creating a basic GCD function
+   - Round 2: Adding type hints and docstrings to the GCD function
+   - Round 3: Adding a new LCM function that uses the GCD function
+
+2. **More Realistic Data**: Each round includes:
+   - System prompts
+   - User prompts with progressive development of a math utilities module
+   - Detailed AI responses with code examples
+   - DiffInfo objects with original content, new content, and formatted diff content
+
+3. **Enhanced Log Retrieval**: The example now shows how to:
+   - Retrieve all log entries for an issue
+   - Get specific round entries with detailed information
+   - Display the diff content for each modified file
+
+4. **Rollback Simulation**: The example explains the rollback functionality conceptually, showing what would happen if you were to roll back to an earlier round. The actual rollback command is commented out to prevent accidental file changes in your project.
+
+5. **Better Display Functions**: Added a dedicated function to show detailed information about a specific round's log entry, including file modifications and diff excerpts.
+
+This enhanced example gives a more complete demonstration of the LogManager's capabilities throughout a multi-round development process, making it easier to understand how the system maintains context and history.
+
+This concludes a fully working implementation.
