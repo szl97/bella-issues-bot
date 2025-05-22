@@ -167,6 +167,14 @@ class WorkflowEngine:
             ai_config=self.core_ai_config,
             version_manager=self.version_manager
         )
+
+    def _prepare_memory(self):
+        current_round = self.log_manager.get_current_round()
+
+        # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+        if self.file_memory and current_round > 1:
+            self.file_memory.update_file_details()
+            logger.info("已更新文件详细信息")
     
     def process_requirement(self, user_requirement: str) -> Optional[str]:
         """
@@ -179,13 +187,6 @@ class WorkflowEngine:
             str: 处理结果的响应文本
         """
         try:
-
-            current_round = self.log_manager.get_current_round()
-
-            # 如果轮次大于1，增量更新上一轮修改的文件详细信息
-            if self.file_memory and current_round > 1:
-                self.file_memory.update_file_details()
-                logger.info("已更新文件详细信息")
 
             response = self._process_requirement_internal(user_requirement)
             
@@ -281,6 +282,8 @@ class WorkflowEngine:
         # 确定当前版本
         requirement, history = self.version_manager.ensure_version_and_generate_context(user_requirement)
 
+        self._prepare_memory()
+
         # 生成提示词
         user_prompt = self._get_user_prompt(requirement, history)
 
@@ -309,6 +312,8 @@ class WorkflowEngine:
             str: 处理结果
         """
         logger.info("开始执行聊天回复流程")
+
+        self._prepare_memory()
 
         history = self.version_manager.get_formatted_history()
 
