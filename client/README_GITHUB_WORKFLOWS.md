@@ -143,7 +143,7 @@ jobs:
 ### Issue处理工作流 (`issue_process.yml`)
 
 ```yaml
-name: Process Issues with AI
+name: Process Issues with bella-issues-bot
 
 on:
   issues:
@@ -154,45 +154,53 @@ on:
 jobs:
   process-issue:
     runs-on: ubuntu-latest
-    if: ${{ !startsWith(github.event.comment.body, 'bella-issues-bot已处理：') }}
     permissions:
       contents: write
-      pull-requests: write
       issues: write
+    if: ${{ (github.event_name == 'issues' && !endsWith(github.event.issue.title, '[skip-bot]')) || (github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, 'bella-issues-bot已处理：') && !endsWith(github.event.issue.title, '[skip-bot]')) }}
     steps:
-      - name: 检出代码
+      - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          
-      - name: 设置Python环境
+
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
-      - name: 安装依赖
-        run: pip install bella-issues-bot
-        
-      - name: 处理Issue
-        env:
-           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
-           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-           GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}
+
+      - name: Install bella-issues-bot
         run: |
-          # 提取Issue ID和需求
-          ISSUE_ID=${{ github.event.issue.number }}
-          REQUIREMENT="${{ github.event.issue.body || github.event.comment.body }}"
-          
-          # 运行bella-issues-bot处理需求
-          bella-issues-bot \
-            --issue-id $ISSUE_ID \
-            --requirement "$REQUIREMENT" \
-            --mode bot \
-            -u "https://api.openai.com/v1" \
-            -k "sk-xxxxx" \
-            --git-url "https://github.com/szl97/bella-issues-bot.git" \
-            --git-token "githubxxxxx"
+          python -m pip install --upgrade pip
+          pip install bella-issues-bot
+
+      - name: Extract issue info
+        id: issue
+        run: |
+          if [[ "${{ github.event_name }}" == "issues" ]]; then
+            echo "issue_id=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            echo "requirement<<EOF" >> $GITHUB_OUTPUT
+            echo "title：${{ github.event.issue.title }}" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "${{ github.event.issue.body }}" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "issue_id=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            echo "requirement<<EOF" >> $GITHUB_OUTPUT
+            echo "${{ github.event.comment.body }}" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Process issue with bella-issues-bot
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+          ISSUE_ID: ${{ steps.issue.outputs.issue_id }}
+        run: |
+          # Run bella-issues-bot in bot mode - it will handle branch creation and pushing
+          bella-issues-bot --mode bot --issue-id ${{ steps.issue.outputs.issue_id }} --core-model gpt-4o --data-model gpt-4o --core-temperature 1.0 --data-temperature 0.7 --requirement "${{ steps.issue.outputs.requirement }}" --git-url "${{ github.server_url }}/${{ github.repository }}" --git-token "${{ secrets.GIT_TOKEN }}" -u "${{ secrets.OPENAI_API_BASE }}" -k "${{ secrets.OPENAI_API_KEY }}"
 ```
 
 ## 使用场景
