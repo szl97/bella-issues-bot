@@ -1,0 +1,139 @@
+基于您的问题，我来详细介绍如何在 GitHub 中使用 bella-issues-bot。
+
+## GitHub 使用方式
+
+bella-issues-bot 提供了完整的 GitHub 集成方案，可以实现自动化的 Issue 处理和代码生成。以下是详细的使用步骤：
+
+### 1. 生成 GitHub Actions 工作流配置
+
+在您的项目根目录下运行以下命令来生成工作流配置文件：
+
+```bash
+# 基本用法 - 使用默认配置
+bella-github-workflows
+
+# 自定义基础分支和模型
+bella-github-workflows --base-branch develop --model gpt-4o
+
+# 完整自定义参数
+bella-github-workflows \
+  --output-dir . \
+  --base-branch main \
+  --model gpt-4o \
+  --temperature 0.7 \
+  --package-version 0.1.21
+```
+
+这将在 `.github/workflows/` 目录中创建两个工作流文件：
+- `memory_init.yml` - 文件记忆初始化工作流
+- `issue_process.yml` - Issue 处理工作流
+
+### 2. 配置 GitHub 仓库设置
+
+#### 2.1 添加必要的 Secrets
+
+在您的 GitHub 仓库中，进入 **Settings > Secrets and variables > Actions**，添加以下 secrets：
+
+- `OPENAI_API_KEY`: 您的 OpenAI API 密钥（必需）
+- `OPENAI_API_BASE`: 自定义 API 基础 URL（可选，默认使用 OpenAI 官方 API）
+- `GIT_TOKEN`: GitHub 个人访问令牌（可选，用于增强权限）
+
+#### 2.2 配置工作流权限
+
+在仓库的 **Settings > Actions > General > Workflow permissions** 中：
+
+- 选择 **"Read and write permissions"**
+- 勾选 **"Allow GitHub Actions to create and approve pull requests"**
+
+### 3. 工作流说明
+
+#### 3.1 文件记忆初始化工作流 (`memory_init.yml`)
+
+**触发条件：**
+- 当指定分支有新的推送时
+- 可以手动触发
+
+**功能：**
+- 自动分析项目文件并生成描述
+- 跳过机器人自己的提交（避免无限循环）
+- 将文件记忆信息提交回仓库
+
+#### 3.2 Issue 处理工作流 (`issue_process.yml`)
+
+**触发条件：**
+- 创建新 Issue 时
+- 在 Issue 中添加新评论时
+
+**功能：**
+- 自动分析 Issue 内容或评论
+- 在专用分支上实现代码修改
+- 创建拉取请求
+- 在 Issue 中回复处理结果
+
+### 4. 使用示例
+
+#### 4.1 创建功能需求 Issue
+
+在 GitHub 仓库中创建一个新 Issue，例如：
+
+```
+标题：添加用户认证功能
+
+内容：
+需要实现以下功能：
+1. 用户登录接口
+2. JWT token 验证
+3. 用户权限管理
+4. 登录状态持久化
+
+请实现相关的后端 API 和前端组件。
+```
+
+#### 4.2 自动处理流程
+
+1. **Issue 创建后**，`issue_process.yml` 工作流会自动触发
+2. **AI 分析**需求并生成实现方案
+3. **创建专用分支**（如 `bella-issues-bot-123`）
+4. **生成和提交代码**到专用分支
+5. **创建 Pull Request** 供审查
+6. **在 Issue 中回复**处理结果和说明
+
+#### 4.3 通过评论交互
+
+您也可以在现有 Issue 中添加评论来请求修改：
+
+```
+请优化登录接口的性能，并添加更详细的错误处理
+```
+
+AI 会分析新的评论并进行相应的代码修改。
+
+### 5. 跳过自动处理
+
+如果您不希望某个 Issue 被自动处理，可以：
+
+1. **在 Issue 标题末尾**添加 `[skip-bot]` 标签
+2. **评论以特定前缀开头**：以 `bella-issues-bot已处理：` 开头的评论会被跳过
+
+### 6. 手动触发文件记忆更新
+
+您可以通过以下方式手动触发文件记忆系统更新：
+
+1. 进入 GitHub 仓库的 **Actions** 标签页
+2. 选择 **"Initialize File Memory"** 工作流
+3. 点击 **"Run workflow"** 按钮
+
+### 7. 监控和调试
+
+- 在 **Actions** 标签页可以查看所有工作流的执行情况
+- 点击具体的工作流运行可以查看详细日志
+- 如果遇到问题，检查 Secrets 配置和权限设置
+
+### 8. 最佳实践
+
+1. **明确的需求描述**：在 Issue 中提供清晰、具体的需求描述
+2. **合适的标签使用**：使用标签来分类和管理 Issues
+3. **定期审查 PR**：虽然 AI 生成的代码质量很高，但仍需人工审查
+4. **保持依赖更新**：定期更新 bella-issues-bot 到最新版本
+
+这样，您就可以在 GitHub 中充分利用 bella-issues-bot 的自动化能力，实现高效的代码开发和 Issue 管理。
