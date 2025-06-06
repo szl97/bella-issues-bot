@@ -8,6 +8,7 @@ from typing import Optional
 from core.ai import AIConfig
 from core.chat_processor import ChatProcessor, ChatProcessorConfig
 from core.code_engineer import CodeEngineer, CodeEngineerConfig
+from core.comment_formatter import CommentFormatter
 from core.decision import DecisionProcess
 from core.diff import Diff
 from core.file_memory import FileMemory, FileMemoryConfig
@@ -260,7 +261,8 @@ class WorkflowEngine:
         # 如果是Bot模式且有GitHub配置，自动回复到issue
         if self.config.mode == "bot":
             try:
-                self._finalize_changes(mode=self.config.mode, comment_text=response)
+                current_text = CommentFormatter.format_diff_blocks(comment_text=response, branch_name=self.git_manager.get_current_branch())
+                self._finalize_changes(mode=self.config.mode, comment_text=current_text)
                 logger.info(f"更改已经推送到远端，并添加了Issue评论")
             except Exception as e:
                 logger.error(f"添加Issue评论时出错: {str(e)}")
