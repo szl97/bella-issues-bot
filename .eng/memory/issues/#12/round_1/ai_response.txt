@@ -1,0 +1,763 @@
+我将根据您的需求，为版本管理模块创建详细的示例文件，展示如何使用VersionManager的各种功能。
+
+```diff
+--- /dev/null
++++ examples/example_version_manager.py
+@@ -0,0 +1,146 @@
++"""
++版本管理器使用示例
++
++展示如何使用VersionManager进行版本控制、历史追踪和回退操作
++"""
++
++import logging
++import os
++from dotenv import load_dotenv
++
++from core.ai import AIConfig
++from core.git_manager import GitManager, GitConfig
++from core.log_config import setup_logging
++from core.log_manager import LogManager, LogConfig
++from core.version_manager import VersionManager
++
++
++def setup_test_environment():
++    """设置测试环境"""
++    # 加载环境变量
++    load_dotenv()
++    
++    # 创建工作目录
++    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../."))
++    issue_id = 99  # 使用测试issue ID
++    
++    # 创建AI配置
++    ai_config = AIConfig(
++        model_name="gpt-4o",
++        temperature=0.7
++    )
++    
++    # 创建Git配置
++    git_config = GitConfig(
++        repo_path=project_dir,
++        default_branch="main"
++    )
++    git_manager = GitManager(config=git_config)
++    
++    # 创建日志配置
++    log_config = LogConfig(
++        project_dir=project_dir,
++        issue_id=issue_id,
++        mode="client"
++    )
++    log_manager = LogManager(config=log_config)
++    
++    # 创建版本管理器
++    version_manager = VersionManager(
++        issue_id=issue_id,
++        ai_config=ai_config,
++        log_manager=log_manager,
++        git_manager=git_manager
++    )
++    
++    return version_manager, log_manager, project_dir
++
++
++def example_basic_version_info():
++    """示例1: 获取基本版本信息"""
++    print("=" * 60)
++    print("示例1: 获取基本版本信息")
++    print("=" * 60)
++    
++    version_manager, log_manager, project_dir = setup_test_environment()
++    
++    # 获取当前轮次
++    current_round = log_manager.get_current_round()
++    print(f"当前轮次: {current_round}")
++    
++    # 获取历史记录
++    history = version_manager.get_formatted_history()
++    if history:
++        print("\n历史记录:")
++        print(history)
++    else:
++        print("暂无历史记录")
++
++
++def example_version_context_generation():
++    """示例2: 版本上下文生成"""
++    print("=" * 60)
++    print("示例2: 版本上下文生成")
++    print("=" * 60)
++    
++    version_manager, log_manager, project_dir = setup_test_environment()
++    
++    # 模拟用户需求
++    original_requirement = """
++    优化代码性能，特别是文件处理部分。
++    同时需要确保之前实现的功能不会被破坏。
++    """
++    
++    # 确定版本并生成上下文
++    requirement, history = version_manager.ensure_version_and_generate_context(original_requirement)
++    
++    print(f"处理后的需求:")
++    print(requirement)
++    print(f"\n生成的历史上下文:")
++    print(history if history else "无历史上下文")
++
++
++def example_version_rollback_analysis():
++    """示例3: 版本回退分析"""
++    print("=" * 60)
++    print("示例3: 版本回退分析")
++    print("=" * 60)
++    
++    version_manager, log_manager, project_dir = setup_test_environment()
++    
++    # 模拟一个可能需要回退的需求
++    requirement_that_may_need_rollback = """
++    上一次的修改有问题，请回退到第2轮的状态，
++    然后重新实现用户登录功能，确保安全性。
++    """
++    
++    print(f"分析需求: {requirement_that_may_need_rollback}")
++    
++    # 如果当前轮次大于1，演示回退分析
++    if version_manager.current_round_num > 1:
++        print("\n开始分析是否需要版本回退...")
++        # 这里会调用AI分析是否需要回退
++        # 在实际使用中，这会通过ensure_version_and_generate_context自动处理
++        requirement, history = version_manager.ensure_version_and_generate_context(requirement_that_may_need_rollback)
++        print(f"分析结果 - 最终需求: {requirement}")
++    else:
++        print("当前为第一轮，无需回退分析")
++
++
++def example_log_entries_extraction():
++    """示例4: 日志条目提取"""
++    print("=" * 60)
++    print("示例4: 日志条目提取")
++    print("=" * 60)
++    
++    version_manager, log_manager, project_dir = setup_test_environment()
++    
++    # 获取所有历史版本信息
++    history_versions = version_manager._extract_history()
++    
++    if history_versions:
++        print(f"找到 {len(history_versions)} 个历史版本:")
++        for version in history_versions:
++            print(f"  轮次 {version.round_num}: {version.requirement[:50]}...")
++    else:
++        print("暂无历史版本记录")
++
++
++def main():
++    """主函数，运行所有示例"""
++    setup_logging(log_level=logging.INFO)
++    
++    print("版本管理器使用示例")
++    print("=" * 80)
++    
++    try:
++        # 运行各个示例
++        example_basic_version_info()
++        example_version_context_generation()
++        example_version_rollback_analysis()
++        example_log_entries_extraction()
++        
++        print("\n" + "=" * 80)
++        print("所有示例运行完成！")
++        
++    except Exception as e:
++        print(f"运行示例时出错: {str(e)}")
++        logging.error(f"示例运行失败: {str(e)}", exc_info=True)
++
++
++if __name__ == "__main__":
++    main()
+```
+
+```diff
+--- /dev/null
++++ examples/advanced/version_rollback_example.py
+@@ -0,0 +1,203 @@
++"""
++高级示例：版本回退操作演示
++
++展示如何在复杂场景下使用版本管理器进行智能回退操作
++"""
++
++import logging
++import os
++import tempfile
++import shutil
++from typing import List
++from dotenv import load_dotenv
++
++from core.ai import AIConfig
++from core.diff import DiffInfo
++from core.git_manager import GitManager, GitConfig
++from core.log_config import setup_logging
++from core.log_manager import LogManager, LogConfig
++from core.version_manager import VersionManager
++
++
++class VersionRollbackDemo:
++    """版本回退演示类"""
++    
++    def __init__(self, demo_project_dir: str):
++        """
++        初始化演示环境
++        
++        Args:
++            demo_project_dir: 演示项目目录
++        """
++        self.demo_project_dir = demo_project_dir
++        self.issue_id = 100  # 演示用的issue ID
++        
++        # 配置AI
++        self.ai_config = AIConfig(
++            model_name="gpt-4o",
++            temperature=0.7
++        )
++        
++        # 配置Git
++        self.git_config = GitConfig(
++            repo_path=demo_project_dir,
++            default_branch="main"
++        )
++        self.git_manager = GitManager(config=self.git_config)
++        
++        # 配置日志
++        self.log_config = LogConfig(
++            project_dir=demo_project_dir,
++            issue_id=self.issue_id,
++            mode="client"
++        )
++        self.log_manager = LogManager(config=self.log_config)
++        
++        # 创建版本管理器
++        self.version_manager = VersionManager(
++            issue_id=self.issue_id,
++            ai_config=self.ai_config,
++            log_manager=self.log_manager,
++            git_manager=self.git_manager
++        )
++    
++    def setup_demo_files(self):
++        """设置演示文件"""
++        # 创建一些示例文件
++        demo_files = {
++            "main.py": """def hello_world():
++    print("Hello, World!")
++
++if __name__ == "__main__":
++    hello_world()
++""",
++            "utils.py": """def add_numbers(a, b):
++    return a + b
++
++def multiply_numbers(a, b):
++    return a * b
++""",
++            "config.py": """DATABASE_URL = "sqlite:///app.db"
++DEBUG = True
++"""
++        }
++        
++        for filename, content in demo_files.items():
++            filepath = os.path.join(self.demo_project_dir, filename)
++            with open(filepath, 'w', encoding='utf-8') as f:
++                f.write(content)
++        
++        print(f"已创建演示文件: {list(demo_files.keys())}")
++    
++    def simulate_round_modifications(self):
++        """模拟多轮修改"""
++        rounds_data = [
++            {
++                "requirement": "添加用户认证功能",
++                "response": "已添加基础的用户认证系统，包括登录和注册功能。",
++                "modified_files": [
++                    DiffInfo(
++                        file_name="auth.py",
++                        is_create=True,
++                        file_content=None,
++                        new_content="""class AuthManager:
++    def __init__(self):
++        self.users = {}
++    
++    def register(self, username, password):
++        if username in self.users:
++            return False
++        self.users[username] = password
++        return True
++    
++    def login(self, username, password):
++        return self.users.get(username) == password
++"""
++                    )
++                ]
++            },
++            {
++                "requirement": "优化数据库连接",
++                "response": "已优化数据库连接，使用连接池提高性能。",
++                "modified_files": [
++                    DiffInfo(
++                        file_name="config.py",
++                        is_modify=True,
++                        file_content="""DATABASE_URL = "sqlite:///app.db"
++DEBUG = True
++""",
++                        new_content="""DATABASE_URL = "postgresql://user:pass@localhost/db"
++DEBUG = False
++CONNECTION_POOL_SIZE = 10
++"""
++                    )
++                ]
++            },
++            {
++                "requirement": "添加日志记录功能",
++                "response": "已添加完整的日志记录系统，支持不同级别的日志输出。",
++                "modified_files": [
++                    DiffInfo(
++                        file_name="logger.py",
++                        is_create=True,
++                        file_content=None,
++                        new_content="""import logging
++
++def setup_logger(name, level=logging.INFO):
++    logger = logging.getLogger(name)
++    logger.setLevel(level)
++    
++    handler = logging.StreamHandler()
++    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
++    handler.setFormatter(formatter)
++    
++    logger.addHandler(handler)
++    return logger
++"""
++                    )
++                ]
++            }
++        ]
++        
++        # 模拟存储每轮的日志
++        for i, round_data in enumerate(rounds_data, 1):
++            print(f"\n模拟第 {i} 轮修改...")
++            
++            # 创建文件（如果是新建的话）
++            for diff_info in round_data["modified_files"]:
++                file_path = os.path.join(self.demo_project_dir, diff_info.file_name)
++                if diff_info.is_create:
++                    with open(file_path, 'w', encoding='utf-8') as f:
++                        f.write(diff_info.new_content)
++                elif diff_info.is_modify:
++                    with open(file_path, 'w', encoding='utf-8') as f:
++                        f.write(diff_info.new_content)
++            
++            # 存储日志
++            self.log_manager.archive_logs(
++                sys_prompt="系统提示词",
++                prompt=f"用户需求：{round_data['requirement']}",
++                response=round_data["response"],
++                diff_infos=round_data["modified_files"]
++            )
++            
++            # 更新当前轮次
++            self.log_manager.current_round += 1
++            
++            print(f"完成第 {i} 轮修改")
++    
++    def demonstrate_rollback_analysis(self):
++        """演示回退分析"""
++        print("\n" + "="*60)
++        print("演示版本回退分析")
++        print("="*60)
++        
++        # 获取当前历史
++        history = self.version_manager.get_formatted_history()
++        print("当前历史记录:")
++        print(history)
++        
++        # 模拟一个需要回退的需求
++        problematic_requirement = """
++        上一次的数据库优化有问题，导致系统不稳定。
++        请回退到添加用户认证功能的版本，然后重新实现数据库优化，
++        但这次使用SQLite而不是PostgreSQL。
++        """
++        
++        print(f"\n新需求（可能需要回退）:")
++        print(problematic_requirement)
++        
++        # 分析是否需要回退
++        try:
++            requirement, context = self.version_manager.ensure_version_and_generate_context(problematic_requirement)
++            print(f"\n分析结果:")
++            print(f"最终需求: {requirement}")
++            print(f"上下文: {context}")
++        except Exception as e:
++            print(f"分析过程中出错: {str(e)}")
++    
++    def demonstrate_manual_rollback(self):
++        """演示手动回退操作"""
++        print("\n" + "="*60)
++        print("演示手动版本回退")
++        print("="*60)
++        
++        # 显示回退前的文件状态
++        print("回退前的文件状态:")
++        for filename in ["auth.py", "config.py", "logger.py"]:
++            filepath = os.path.join(self.demo_project_dir, filename)
++            if os.path.exists(filepath):
++                print(f"  ✓ {filename} 存在")
++            else:
++                print(f"  ✗ {filename} 不存在")
++        
++        # 执行回退到第1轮
++        target_round = 1
++        print(f"\n执行回退到第 {target_round} 轮...")
++        success = self.version_manager._rollback_to_version(target_round)
++        
++        if success:
++            print("回退成功！")
++            
++            # 显示回退后的文件状态
++            print("\n回退后的文件状态:")
++            for filename in ["auth.py", "config.py", "logger.py"]:
++                filepath = os.path.join(self.demo_project_dir, filename)
++                if os.path.exists(filepath):
++                    print(f"  ✓ {filename} 存在")
++                else:
++                    print(f"  ✗ {filename} 不存在")
++        else:
++            print("回退失败！")
++    
++    def run_demo(self):
++        """运行完整的演示"""
++        print("开始版本回退演示...")
++        
++        # 设置演示文件
++        self.setup_demo_files()
++        
++        # 模拟多轮修改
++        self.simulate_round_modifications()
++        
++        # 演示回退分析
++        self.demonstrate_rollback_analysis()
++        
++        # 演示手动回退
++        self.demonstrate_manual_rollback()
++        
++        print("\n演示完成！")
++
++
++def main():
++    """主函数"""
++    setup_logging(log_level=logging.INFO)
++    load_dotenv()
++    
++    # 创建临时目录用于演示
++    temp_dir = tempfile.mkdtemp(prefix="version_rollback_demo_")
++    print(f"创建演示目录: {temp_dir}")
++    
++    try:
++        # 运行演示
++        demo = VersionRollbackDemo(temp_dir)
++        demo.run_demo()
++        
++    except Exception as e:
++        print(f"演示过程中出错: {str(e)}")
++        logging.error(f"演示失败: {str(e)}", exc_info=True)
++    
++    finally:
++        # 清理临时目录
++        if os.path.exists(temp_dir):
++            shutil.rmtree(temp_dir, ignore_errors=True)
++            print(f"已清理演示目录: {temp_dir}")
++
++
++if __name__ == "__main__":
++    main()
+```
+
+```diff
+--- /dev/null
++++ examples/advanced/version_integration_example.py
+@@ -0,0 +1,168 @@
++"""
++高级示例：版本管理与工作流引擎集成
++
++展示版本管理器如何与WorkflowEngine协同工作，
++实现智能的需求处理和版本控制
++"""
++
++import logging
++import os
++import tempfile
++import shutil
++from dotenv import load_dotenv
++
++from core.workflow_engine import WorkflowEngine, WorkflowEngineConfig
++from core.log_config import setup_logging
++
++
++class VersionIntegrationDemo:
++    """版本管理集成演示类"""
++    
++    def __init__(self, demo_project_dir: str):
++        """
++        初始化演示环境
++        
++        Args:
++            demo_project_dir: 演示项目目录
++        """
++        self.demo_project_dir = demo_project_dir
++        self.issue_id = 200  # 演示用的issue ID
++        
++        # 创建工作流引擎配置
++        self.config = WorkflowEngineConfig(
++            project_dir=demo_project_dir,
++            issue_id=self.issue_id,
++            core_model="gpt-4o",
++            data_model="gpt-4o",
++            core_template=0.7,
++            data_template=0.7,
++            mode="client"
++        )
++        
++        # 创建工作流引擎
++        self.workflow_engine = WorkflowEngine(self.config)
++    
++    def setup_initial_project(self):
++        """设置初始项目文件"""
++        initial_files = {
++            "app.py": """from flask import Flask
++
++app = Flask(__name__)
++
++@app.route('/')
++def hello():
++    return "Hello, World!"
++
++if __name__ == "__main__":
++    app.run(debug=True)
++""",
++            "requirements.txt": """Flask==2.3.3
++""",
++            "README.md": """# Demo Project
++
++A simple Flask application for demonstration.
++"""
++        }
++        
++        for filename, content in initial_files.items():
++            filepath = os.path.join(self.demo_project_dir, filename)
++            with open(filepath, 'w', encoding='utf-8') as f:
++                f.write(content)
++        
++        print(f"已创建初始项目文件: {list(initial_files.keys())}")
++    
++    def demonstrate_incremental_development(self):
++        """演示增量开发过程"""
++        print("\n" + "="*70)
++        print("演示增量开发过程")
++        print("="*70)
++        
++        # 定义一系列渐进式需求
++        requirements = [
++            {
++                "description": "第一轮：添加用户模型",
++                "requirement": """
++                为应用添加用户模型，包括：
++                1. User类，包含id、username、email字段
++                2. 基础的用户管理功能
++                3. 更新requirements.txt添加必要的依赖
++                """
++            },
++            {
++                "description": "第二轮：添加用户注册功能", 
++                "requirement": """
++                基于已有的用户模型，添加用户注册功能：
++                1. 创建注册表单
++                2. 添加注册路由
++                3. 实现用户注册逻辑
++                """
++            },
++            {
++                "description": "第三轮：添加用户登录功能",
++                "requirement": """
++                继续完善用户系统，添加登录功能：
++                1. 创建登录表单
++                2. 添加登录路由
++                3. 实现用户认证逻辑
++                4. 添加会话管理
++                """
++            }
++        ]
++        
++        # 逐步处理每个需求
++        for i, req_data in enumerate(requirements, 1):
++            print(f"\n{'='*50}")
++            print(f"{req_data['description']}")
++            print(f"{'='*50}")
++            
++            try:
++                # 使用工作流引擎处理需求
++                response = self.workflow_engine.process_requirement(req_data['requirement'])
++                
++                if response:
++                    print(f"✓ 第{i}轮处理完成")
++                    print(f"响应摘要: {response[:200]}..." if len(response) > 200 else response)
++                else:
++                    print(f"✗ 第{i}轮处理失败")
++                    
++            except Exception as e:
++                print(f"✗ 第{i}轮处理出错: {str(e)}")
++    
++    def demonstrate_rollback_scenario(self):
++        """演示回退场景"""
++        print("\n" + "="*70)
++        print("演示版本回退场景")
++        print("="*70)
++        
++        # 模拟一个需要回退的需求
++        rollback_requirement = """
++        我发现之前的登录功能有安全问题，需要重新实现。
++        请回退到添加用户注册功能的版本，然后重新实现更安全的登录系统：
++        1. 使用密码哈希
++        2. 添加登录失败次数限制
++        3. 实现更安全的会话管理
++        """
++        
++        print("提交回退需求...")
++        print(f"需求内容: {rollback_requirement}")
++        
++        try:
++            response = self.workflow_engine.process_requirement(rollback_requirement)
++            
++            if response:
++                print("✓ 回退需求处理完成")
++                print(f"响应: {response}")
++            else:
++                print("✗ 回退需求处理失败")
++                
++        except Exception as e:
++            print(f"✗ 回退需求处理出错: {str(e)}")
++    
++    def run_demo(self):
++        """运行完整的集成演示"""
++        print("开始版本管理与工作流引擎集成演示...")
++        
++        # 设置初始项目
++        self.setup_initial_project()
++        
++        # 演示增量开发
++        self.demonstrate_incremental_development()
++        
++        # 演示回退场景
++        self.demonstrate_rollback_scenario()
++        
++        print("\n集成演示完成！")
+
+
+def main():
++    """主函数"""
++    setup_logging(log_level=logging.INFO)
++    load_dotenv()
++    
++    # 创建临时目录用于演示
++    temp_dir = tempfile.mkdtemp(prefix="version_integration_demo_")
++    print(f"创建演示目录: {temp_dir}")
++    
++    try:
++        # 运行演示
++        demo = VersionIntegrationDemo(temp_dir)
++        demo.run_demo()
++        
++    except Exception as e:
++        print(f"演示过程中出错: {str(e)}")
++        logging.error(f"演示失败: {str(e)}", exc_info=True)
++    
++    finally:
++        # 清理临时目录
++        if os.path.exists(temp_dir):
++            shutil.rmtree(temp_dir, ignore_errors=True)
++            print(f"已清理演示目录: {temp_dir}")
+
+
+if __name__ == "__main__":
++    main()
+```
+
+```diff
+--- /dev/null
++++ examples/README_VERSION_EXAMPLES.md
+@@ -0,0 +1,178 @@
++# 版本管理示例文档
++
++本目录包含了版本管理模块（VersionManager）的详细使用示例，展示如何在不同场景下使用版本控制、历史追踪和智能回退功能。
++
++## 示例文件概览
++
++### 1. 基础示例
++
++#### `example_version_manager.py`
++版本管理器的基础使用示例，包含以下功能演示：
++
++- **获取基本版本信息**：显示当前轮次和历史记录
++- **版本上下文生成**：展示如何为新需求生成历史上下文
++- **版本回退分析**：演示AI如何分析是否需要版本回退
++- **日志条目提取**：展示如何提取和查看历史版本信息
++
++**适用场景**：
++- 初次了解版本管理功能
++- 调试版本管理问题
++- 查看项目的版本历史
++
++### 2. 高级示例
++
++#### `advanced/version_rollback_example.py`
++版本回退操作的完整演示，包含：
++
++- **模拟多轮开发**：创建多个开发轮次的历史记录
++- **智能回退分析**：展示AI如何分析复杂的回退需求
++- **文件级回退操作**：演示如何回退具体的文件修改
++- **回退状态验证**：检查回退操作的结果
++
++**演示场景**：
++```python
++# 模拟的开发历史
++第1轮：添加用户认证功能 -> 创建 auth.py
++第2轮：优化数据库连接 -> 修改 config.py
++第3轮：添加日志记录功能 -> 创建 logger.py
++
++# 回退需求示例
++"上一次的数据库优化有问题，请回退到添加用户认证功能的版本"
++```
++
++#### `advanced/version_integration_example.py`
++版本管理与WorkflowEngine的集成演示，展示：
++
++- **增量开发流程**：展示如何通过多轮需求逐步构建项目
++- **版本感知处理**：演示工作流引擎如何利用版本历史
++- **智能回退决策**：展示复杂场景下的自动回退判断
++- **端到端工作流**：完整的开发-回退-重做流程
++
++**演示场景**：
++```python
++# Flask应用的渐进式开发
++第1轮：基础Flask应用 + 用户模型
++第2轮：添加用户注册功能
++第3轮：添加用户登录功能
++第4轮：发现安全问题，回退并重新实现
++```
++
++## 运行示例
++
++### 环境准备
++
++1. **安装依赖**：
++```bash
++pip
