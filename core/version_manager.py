@@ -56,14 +56,24 @@ class VersionManager:
         self.current_round_num = log_manager.get_current_round()
 
     def ensure_version_and_generate_context(self, original_requirement: str) -> tuple[str, str]:
+        """
+        确保版本并生成上下文
+        
+        Args:
+            original_requirement: 用户原始需求
+            
+        Returns:
+            tuple: (处理后的需求, 历史上下文)
+        """
         requirement = None
-        if self.current_round_num > 1 :
+        background_info = None
+        if self.current_round_num > 1:
             rollback, rollback_num, requirement, reasoning = self._analyze_rollback_need(original_requirement)
-        requirement = original_requirement if requirement is None else requirement
+        
+        requirement = self._integrate_requirement_with_background(original_requirement, requirement)
         history = self.get_formatted_history()
         return requirement, history
 
-    
     def _extract_history(self) -> List[VersionInfo]:
         """
         提取当前issue的历史版本信息
@@ -118,6 +128,72 @@ class VersionManager:
             formatted_history.append("")  # 添加空行分隔
         return "\n".join(formatted_history)
 
+    def _extract_user_requirements_from_history(self) -> List[str]:
+        """
+        从历史记录中提取所有轮次的用户需求
+        
+        Returns:
+            List[str]: 用户需求列表，按轮次排序
+        """
+        history = self._extract_history()
+        requirements = []
+        
+        for version in history:
+            if version.requirement:
+                requirements.append(version.requirement)
+        
+        return requirements
+    
+    def _integrate_requirement_with_background(self, original_requirement: str, analyzed_requirement: Optional[str]) -> str:
+        """
+        将用户需求与背景信息整合
+        
+        Args:
+            original_requirement: 用户原始需求
+            analyzed_requirement: 分析后的需求（可能包含背景信息）
+            
+        Returns:
+            str: 整合后的需求
+        """
+        if analyzed_requirement is None:
+            return original_requirement
+        
+        # 如果分析后的需求就是原始需求，说明没有背景信息需要添加
+        if analyzed_requirement == original_requirement:
+            return original_requirement
+        
+        # 如果分析后的需求包含了背景信息，直接返回
+        return analyzed_requirement
+    
+    def _format_background_requirements(self, requirements: List[str]) -> str:
+        """
+        格式化背景需求信息
+        
+        Args:
+            requirements: 需求列表
+            
+        Returns:
+            str: 格式化后的背景信息
+        """
+        if not requirements:
+            return ""
+        
+        background_parts = []
+        background_parts.append("## 背景信息（之前被回滚的需求）")
+        
+        for i, req in enumerate(requirements, 1):
+            background_parts.append(f"### 需求 {i}:")
+            background_parts.append(req.strip())
+            background_parts.append("")  # 添加空行
+        
+        return "\n".join(background_parts)
+    
+    def _should_add_background_for_full_rollback(self, target_round: int, integrated_requirement: Optional[str]) -> bool:
+        """
+        判断是否需要为全量回滚添加背景信息
+        """
+        return target_round == 0 and integrated_requirement is None
+
     def _analyze_rollback_need(self,
                               current_requirement: str) -> Tuple[bool, Optional[int], Optional[str], Optional[str]]:
         """
@@ -129,6 +205,9 @@ class VersionManager:
         Returns:
             Tuple[bool, int, str, str]: (是否需要回退, 回退到的轮次, 整合后的需求，决策的原因)
         """
+        # 保存当前需求用于工具函数访问
+        self._current_analyzing_requirement = current_requirement
+        
         # 获取历史记录
         history = self.get_formatted_history()
         
@@ -158,10 +237,11 @@ class VersionManager:
 ##工具参数分析
 你需要调用 version_manager 工具来处理问题，请请根据上述信息分析以下问题，
 1. 是否需要回退到某个特定版本? 如果需要，则调用工具时的参数 need_rollback 为 True
-2. 如果需要回退，应该回退到哪个round?  调用工具时的参数，大于等于0，如果全部回滚则设置为0
+2. 如果需要回退，应该回退到哪个round? 调用工具时的参数，大于等于0，如果全部回滚则设置为0
 3. 如果需要回退，当前需求的信息是否完整？需要把回退到的round之后的round需求与当前需求结合，作为补充信息吗? 如果需要结合，则将重写后的本轮需求，作为integrated_requirement参数；如果不需要则不需要此参数。
 4. 做出这个决策的原因是什么？调用工具时，作为reasoning参数
 
+注意：如果回滚到第一轮（target_round为0）且不需要整合需求（integrated_requirement为None），系统会自动将被回滚的需求作为背景信息添加到当前需求中。
 ##工具执行
 根据得到的参数，调用version_manager。无论是否需要rollback必须调用工具执行任务，完成当前版本的创建。
 
@@ -296,27 +376,27 @@ class VersionManager:
         Returns:
             Tool: 版本管理工具
         """
-        def version_manager_tool(need_rollback: bool,
-                                          target_round: Optional[int] = None,
-                                          integrated_requirement: Optional[str] = None,
-                                          reasoning: Optional[str] = None) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
-            """
-            决定是否回退版本并执行回退
-            
-            Args:
-                need_rollback:是否需要回退,
-                target_round：回退到的轮次,
-                integrated_requirement： 整合后的需求
-                reasoning: 做出决策的原因
-                
-            Returns:
-                str: 执行结果
-            """
+        def version_manager_tool_wrapper(need_rollback: bool,
+                                       target_round: Optional[int] = None,
+                                       integrated_requirement: Optional[str] = None,
+                                       reasoning: Optional[str] = None):
+            # 获取调用时的当前需求（通过闭包访问）
+            current_req = getattr(self, '_current_analyzing_requirement', '')
             
             if need_rollback and target_round is not None:
                 success = self._rollback_to_version(target_round)
-                if(success) :
-                    return (True, target_round, integrated_requirement, reasoning)
+                if success:
+                    # 如果是全量回滚且没有整合需求，需要添加背景信息
+                    final_integrated_requirement = integrated_requirement
+                    if self._should_add_background_for_full_rollback(target_round, integrated_requirement):
+                        # 获取被回滚的所有用户需求作为背景
+                        rollback_requirements = self._extract_user_requirements_from_history()
+                        if rollback_requirements:
+                            background_info = self._format_background_requirements(rollback_requirements)
+                            # 将背景信息与当前需求整合
+                            final_integrated_requirement = f"{background_info}\n\n## 当前需求\n{current_req}"
+                    
+                    return (True, target_round, final_integrated_requirement, reasoning)
                 else:
                     logger.warning(f"版本回退失败:issues:{self.current_issue_id},target:{target_round},integrated_requirement:{integrated_requirement}")
             return (False, 0, None, reasoning)
@@ -324,7 +404,7 @@ class VersionManager:
         return StructuredTool.from_function(
             name="version_rollback_manager",
             description="用于决定当前项目版本的工具，如果 need_rollback 为True，则根据target_round和integrated_requirement进行版本回退；如果need_rollback为False则保持当前版本",
-            func=version_manager_tool,
+            func=version_manager_tool_wrapper,
             return_direct=True,
             args_schema=self._VersionManagerToolSchema
         )

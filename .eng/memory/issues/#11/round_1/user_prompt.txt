@@ -1,0 +1,1201 @@
+# 项目文件描述
+
+
+- core/version_manager.py: 版本管理模块，负责代码生成的版本控制、历史追踪和回退。包含VersionManager类，提供历史轮次提取、格式化历史记录、版本回退分析和执行功能。与GitManager和LogManager交互，为AI助手提供版本回退工具。
+
+- core/workflow_engine.py: 实现工作流引擎核心，协调版本管理、日志管理和AI交互。包含WorkflowEngine类和WorkflowEngineConfig数据类，负责处理用户需求，根据决策结果执行代码生成或聊天流程。支持客户端和机器人两种工作模式。
+
+- core/log_manager.py: 管理代码生成日志的存储和检索。包含LogManager类，用于存档系统提示词、用户提示词、AI响应等内容，支持按issue和轮次组织日志。提供archive_logs和get_issue_log_entries等方法，记录代码生成过程。
+
+- core/decision.py: 决策环境模块，用于分析用户需求类型并确定处理流程。包含DecisionProcess类和DecisionResult数据类，通过AI助手判断用户需求是否需要修改代码，并决定使用代码修改流程还是对话流程。与版本管理器(VersionManager)和AI助手(AIAssistant)交互。
+
+
+# 文件内容
+
+
+
+```
+File: core/version_manager.py
+1 """
+2 版本管理模块，处理代码生成的版本控制、历史追踪和回退功能。
+3 
+4 该模块提供了以下功能:
+5 1. 提取历史轮次的日志信息
+6 2. 格式化历史执行记录用于AI参考
+7 3. 分析用户需求，决定是否需要版本回退
+8 4. 执行Git版本回退操作
+9 5. 为AI助手提供版本回退工具
+10 """
+11 
+12 import os
+13 from dataclasses import dataclass
+14 from typing import List, Tuple, Optional
+15 
+16 from langchain_core.tools import Tool, StructuredTool
+17 from pydantic import BaseModel, Field
+18 
+19 from core.ai import AIConfig, AIAssistant
+20 from core.git_manager import GitManager
+21 from core.log_config import get_logger
+22 from core.log_manager import LogManager
+23 from core.prompt_generator import PromptGenerator
+24 
+25 logger = get_logger(__name__)
+26 
+27 @dataclass
+28 class VersionInfo:
+29     """存储特定版本的信息"""
+30     issue_id: int
+31     round_num: int
+32     requirement: str
+33     agent_response: str
+34     modified_files: List[str] = None
+35 
+36 
+37 class VersionManager:
+38     """管理代码生成的版本信息，支持版本回退和需求整合"""
+39 
+40     def __init__(self, issue_id: int, ai_config: AIConfig, log_manager: LogManager, git_manager: GitManager, file_memory=None):
+41         """
+42         初始化版本管理器
+43         
+44         Args:
+45             issue_id: GitHub issue编号
+46             ai_config: AI配置
+47             log_manager: 日志管理器实例 
+48             git_manager: Git管理器实例
+49             file_memory: 文件内存管理器实例(可选)
+50         """
+51         self.ai_assistant = AIAssistant(config=ai_config, tools=[self._create_version_manager_tool()])
+52         self.file_memory = file_memory
+53         self.log_manager = log_manager
+54         self.git_manager = git_manager
+55         self.current_issue_id = issue_id
+56         self.current_round_num = log_manager.get_current_round()
+57 
+58     def ensure_version_and_generate_context(self, original_requirement: str) -> tuple[str, str]:
+59         requirement = None
+60         if self.current_round_num > 1 :
+61             rollback, rollback_num, requirement, reasoning = self._analyze_rollback_need(original_requirement)
+62         requirement = original_requirement if requirement is None else requirement
+63         history = self.get_formatted_history()
+64         return requirement, history
+65 
+66     
+67     def _extract_history(self) -> List[VersionInfo]:
+68         """
+69         提取当前issue的历史版本信息
+70             
+71         Returns:
+72             List[VersionInfo]: 历史版本信息列表
+73         """
+74         # 获取所有轮次的日志条目
+75         log_entries = self.log_manager.get_issue_log_entries()
+76         
+77         # 提取每轮的需求和响应
+78         version_info_list = []
+79         for entry in log_entries:
+80             try:
+81                 # 从用户提示中提取需求
+82                 extracted_info = PromptGenerator.extractInfo(entry.prompt)
+83                 requirement = extracted_info.requirement
+84                 
+85                 # 创建版本信息
+86                 version_info = VersionInfo(
+87                     issue_id=self.current_issue_id,
+88                     round_num=entry.round_num,
+89                     requirement=requirement,
+90                     agent_response=entry.response,
+91                     modified_files=entry.modified_files
+92                 )
+93                 version_info_list.append(version_info)
+94                 
+95             except Exception as e:
+96                 logger.error(f"提取轮次 {entry.round_num} 的信息时出错: {str(e)}")
+97         
+98         return version_info_list
+99 
+100     def get_formatted_history(self) -> str:
+101         """
+102         获取格式化的历史执行记录
+103         
+104         Args:
+105             
+106         Returns:
+107             str: 格式化的历史执行记录
+108         """
+109         history = self._extract_history()
+110         formatted_history = []
+111         
+112         for version in history:
+113             formatted_history.append(f"【round_{version.round_num}】")
+114             formatted_history.append(f"requirement: \n{version.requirement}")
+115             
+116             # 简化AI响应，避免历史记录过长
+117             formatted_history.append(f"agent_response: \n{version.agent_response}")
+118             formatted_history.append("")  # 添加空行分隔
+119         return "\n".join(formatted_history)
+120 
+121     def _analyze_rollback_need(self,
+122                               current_requirement: str) -> Tuple[bool, Optional[int], Optional[str], Optional[str]]:
+123         """
+124         分析是否需要版本回退
+125         
+126         Args:
+127             current_requirement: 当前用户需求
+128             
+129         Returns:
+130             Tuple[bool, int, str, str]: (是否需要回退, 回退到的轮次, 整合后的需求，决策的原因)
+131         """
+132         # 获取历史记录
+133         history = self.get_formatted_history()
+134         
+135         # 构建提示词
+136         prompt = f"""
+137 # 角色
+138 你是一位资深程序员，现在在处理用户的issues，请分析本次用户提出的需求和历史执行记录，判断之前提交的代码是否需要版本回退。并调用工具完成版本的创建。
+139 
+140 #注意
+141 需要重置的轮次如果就是上一个轮次，那么就是不需要回退。
+142 
+143 ##需求回退的情况举例
+144 - 最后一个round是5，假如你认为round4和round5的改动极其不符合，会影响用户需求的实现，那么就需要回滚4和5，此次的需求基于round3修改，target_round为1
+145 - 最后一个round是4，假如你认为之前的所有修改都极其不符合用户需求或错误，重新改更有利，那么用户此次的需求应该基于原始代码修改，那么就需要回滚所有改动，target_round为0
+146 
+147 ##不需要回滚的情况举例
+148 - 最后一个round是5，假如你认为用户的此次需求，在round5的代码上改动即可，那么就可以不回滚，直接修改
+149 
+150 # 历史执行记录
+151 {history}
+152 
+153 # 当前用户需求
+154 {current_requirement}
+155 
+156 
+157 #执行步骤
+158 ##工具参数分析
+159 你需要调用 version_manager 工具来处理问题，请请根据上述信息分析以下问题，
+160 1. 是否需要回退到某个特定版本? 如果需要，则调用工具时的参数 need_rollback 为 True
+161 2. 如果需要回退，应该回退到哪个round?  调用工具时的参数，大于等于0，如果全部回滚则设置为0
+162 3. 如果需要回退，当前需求的信息是否完整？需要把回退到的round之后的round需求与当前需求结合，作为补充信息吗? 如果需要结合，则将重写后的本轮需求，作为integrated_requirement参数；如果不需要则不需要此参数。
+163 4. 做出这个决策的原因是什么？调用工具时，作为reasoning参数
+164 
+165 ##工具执行
+166 根据得到的参数，调用version_manager。无论是否需要rollback必须调用工具执行任务，完成当前版本的创建。
+167 
+168 """
+169 
+170         # 发送给AI进行分析
+171         response = self.ai_assistant.generate_response(prompt, use_tools=True)
+172 
+173         return response if response else (False, 0, current_requirement)
+174 
+175     def _rollback_to_version(self, target_round: int) -> bool:
+176         """
+177         执行基于文件的版本回退
+178         
+179         Args:
+180             target_round: 目标轮次
+181             
+182         Returns:
+183             bool: 回退是否成功
+184         """
+185         try:
+186             # 获取目标轮次的日志条目
+187             log_entries = self.log_manager.get_issue_log_entries(include_diff=True)
+188             
+189             if not log_entries:
+190                 logger.error("找不到任何日志条目")
+191                 return False
+192             
+193             # 获取当前轮次到目标轮次之间的所有轮次记录，按轮次降序排列（从最新到最旧）
+194             entries_to_rollback = sorted(
+195                 [entry for entry in log_entries if entry.round_num > target_round],
+196                 key=lambda entry: entry.round_num,
+197                 reverse=True
+198             )
+199             
+200             if not entries_to_rollback:
+201                 logger.info(f"当前已经是轮次 {target_round} 或更早，无需回滚")
+202                 return True
+203             
+204             # 依次回滚每一轮的修改
+205             import os
+206             project_dir = self.log_manager.config.project_dir
+207             
+208             for entry in entries_to_rollback:
+209                 logger.info(f"正在回滚轮次 {entry.round_num} 的修改...")
+210                 
+211                 if not entry.modified_files:
+212                     logger.info(f"轮次 {entry.round_num} 没有文件修改，跳过")
+213                     continue
+214                 
+215                 # 对每个修改的文件进行回滚
+216                 for diff_info in entry.modified_files:
+217                     file_path = os.path.join(project_dir, diff_info.file_name)
+218                     
+219                     if diff_info.is_create:
+220                         # 如果是创建操作，则删除该文件
+221                         if os.path.exists(file_path):
+222                             os.remove(file_path)
+223                             logger.info(f"删除文件 {diff_info.file_name}，回滚轮次 {entry.round_num} 的创建操作")
+224                     
+225                     elif diff_info.is_modify:
+226                         # 如果是修改操作，则恢复到修改前的内容
+227                         if diff_info.file_content is not None:
+228                             os.makedirs(os.path.dirname(file_path), exist_ok=True)
+229                             with open(file_path, "w", encoding="utf-8") as f:
+230                                 f.write(diff_info.file_content)
+231                             logger.info(f"恢复文件 {diff_info.file_name} 到轮次 {entry.round_num} 修改前的状态")
+232                         else:
+233                             logger.warning(f"文件 {diff_info.file_name} 没有保存修改前的内容，无法回滚")
+234                     
+235                     elif diff_info.is_delete:
+236                         # 如果是删除操作，则恢复文件
+237                         if diff_info.file_content is not None:
+238                             os.makedirs(os.path.dirname(file_path), exist_ok=True)
+239                             with open(file_path, "w", encoding="utf-8") as f:
+240                                 f.write(diff_info.file_content)
+241                             logger.info(f"恢复文件 {diff_info.file_name}，回滚轮次 {entry.round_num} 的删除操作")
+242                         else:
+243                             logger.warning(f"文件 {diff_info.file_name} 没有保存删除前的内容，无法回滚")
+244 
+245             self.log_manager.rollback_logs(target_round)
+246             logger.info(f"成功回滚到轮次 {target_round}")
+247             return True
+248             
+249         except Exception as e:
+250             logger.error(f"文件版本回退失败: {str(e)}")
+251             return False
+252 
+253     def _rollback_to_version_git(self, target_round: int) -> bool:
+254         """
+255         执行版本回退
+256         
+257         Args:
+258             target_round: 目标轮次
+259             
+260         Returns:
+261             bool: 回退是否成功
+262         """
+263         try:
+264             # 构建目标分支名
+265             target_branch = f"bella-bot-issues-{self.current_issue_id}-{target_round}"
+266             return self.git_manager.reset_to(target_branch)
+267             
+268         except Exception as e:
+269             logger.error(f"Git版本回退失败: {str(e)}")
+270             return False
+271 
+272     class _VersionManagerToolSchema(BaseModel):
+273         need_rollback: bool = Field(
+274             ...,
+275             examples=[True, False],
+276             description="是否需要回退版本"
+277         )
+278         target_round: Optional[int] = Field(
+279             None,
+280             examples=[0,1,2,3,4],
+281             description="要回滚到的目标轮次，只有need_rollback为True时需要且必须.0代表需要全部回滚。"
+282         )
+283         integrated_requirement: Optional[str] = Field(
+284             None,
+285             description="整合后的需求，只有need_rollback为True且需要重写需求时需要"
+286         )
+287         reasoning: Optional[str] = Field(
+288             None,
+289             description="做这个出决策的原因"
+290         )
+291 
+292     def _create_version_manager_tool(self) -> StructuredTool:
+293         """
+294         版本管理工具，供AI助手使用
+295             
+296         Returns:
+297             Tool: 版本管理工具
+298         """
+299         def version_manager_tool(need_rollback: bool,
+300                                           target_round: Optional[int] = None,
+301                                           integrated_requirement: Optional[str] = None,
+302                                           reasoning: Optional[str] = None) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
+303             """
+304             决定是否回退版本并执行回退
+305             
+306             Args:
+307                 need_rollback:是否需要回退,
+308                 target_round：回退到的轮次,
+309                 integrated_requirement： 整合后的需求
+310                 reasoning: 做出决策的原因
+311                 
+312             Returns:
+313                 str: 执行结果
+314             """
+315             
+316             if need_rollback and target_round is not None:
+317                 success = self._rollback_to_version(target_round)
+318                 if(success) :
+319                     return (True, target_round, integrated_requirement, reasoning)
+320                 else:
+321                     logger.warning(f"版本回退失败:issues:{self.current_issue_id},target:{target_round},integrated_requirement:{integrated_requirement}")
+322             return (False, 0, None, reasoning)
+323         
+324         return StructuredTool.from_function(
+325             name="version_rollback_manager",
+326             description="用于决定当前项目版本的工具，如果 need_rollback 为True，则根据target_round和integrated_requirement进行版本回退；如果need_rollback为False则保持当前版本",
+327             func=version_manager_tool,
+328             return_direct=True,
+329             args_schema=self._VersionManagerToolSchema
+330         )
+331
+```
+
+
+
+
+```
+File: core/workflow_engine.py
+1 import os
+2 import shutil
+3 import tempfile
+4 import uuid
+5 from dataclasses import dataclass
+6 from typing import Optional
+7 
+8 from core.ai import AIConfig
+9 from core.chat_processor import ChatProcessor, ChatProcessorConfig
+10 from core.code_engineer import CodeEngineer, CodeEngineerConfig
+11 from core.decision import DecisionProcess
+12 from core.diff import Diff
+13 from core.file_memory import FileMemory, FileMemoryConfig
+14 from core.file_selector import FileSelector
+15 from core.git_manager import GitManager, GitConfig
+16 from core.log_config import get_logger
+17 from core.log_manager import LogManager, LogConfig
+18 from core.prompt_generator import PromptGenerator, PromptData
+19 from core.version_manager import VersionManager
+20 
+21 logger = get_logger(__name__)
+22 
+23 @dataclass
+24 class WorkflowEngineConfig:
+25     project_dir: str
+26     issue_id:int
+27     core_model:str = "gpt-4o"
+28     data_model:str = "gpt-4o"
+29     core_template: float = 0.7
+30     data_template: float = 0.7
+31     max_retry: int = 3,
+32     default_branch: str = "main"
+33     mode: str = "client" # ["client", "bot"] bot模式下，每次进行工作时，会hard reset到issues的最新分支上
+34     base_url: Optional[str] = None
+35     api_key: Optional[str] = None
+36     github_remote_url: Optional[str] =None
+37     github_token: Optional[str] = None
+38 
+39 
+40 class WorkflowEngine:
+41     CODE_TIMES = 0
+42     CHAT_TIMES = 0
+43     """
+44     工作流引擎，协调版本管理、日志管理和AI交互
+45     """
+46     def __init__(self, config: WorkflowEngineConfig):
+47         """
+48         初始化工作流引擎
+49         
+50         Args:
+51             config: 工作流配置
+52         """
+53         self.CODE_TIMES = 0
+54         self.CHAT_TIMES = 0
+55         # 存储原始配置
+56         self.original_config = config
+57         
+58         # 根据模式设置工作目录
+59         if config.mode == "bot":
+60             # 创建临时目录作为工作区
+61             self.temp_dir = os.path.join(
+62                 tempfile.gettempdir(),
+63                 f"bella-bot-{config.issue_id}-{str(uuid.uuid4())[:8]}"
+64             )
+65             os.makedirs(self.temp_dir, exist_ok=True)
+66             # 更新配置以使用临时目录
+67             self.config = WorkflowEngineConfig(
+68                 project_dir=self.temp_dir,
+69                 **{k: v for k, v in vars(config).items() if k != 'project_dir'}
+70             )
+71             logger.info(f"Bot模式：创建临时工作目录 {self.temp_dir}")
+72         else:
+73             # 客户端模式直接使用指定的目录
+74             self.config = config
+75             self.temp_dir = None
+76             logger.info("当前为client模式")
+77 
+78         self.project_dir = os.path.abspath(self.config.project_dir)
+79         # 创建AI配置
+80         self.core_ai_config = AIConfig(
+81             model_name=config.core_model,
+82             temperature=config.core_template,
+83             base_url=config.base_url,
+84             api_key=config.api_key
+85         )
+86         
+87         self.data_ai_config = AIConfig(
+88             model_name=config.data_model,
+89             temperature=config.data_template,
+90             base_url=config.base_url,
+91             api_key=config.api_key
+92         )
+93         
+94         # 创建Git配置
+95         self.git_config = GitConfig(
+96             repo_path=self.project_dir,
+97             remote_url=config.github_remote_url or os.getenv("GIT_REMOTE"),
+98             auth_token=config.github_token or os.getenv("GITHUB_TOKEN"),
+99             default_branch=config.default_branch
+100         )
+101         
+102         # 创建日志配置
+103         self.log_config = LogConfig(
+104             project_dir=self.project_dir,
+105             issue_id=config.issue_id,
+106             mode=config.mode
+107         )
+108         
+109         # 初始化管理器
+110         self.git_manager = GitManager(config=self.git_config)
+111 
+112         # 检出对应的分支
+113         if self.config.mode == "bot":
+114             try:
+115                 # 重置到issue对应的分支
+116                 self.git_manager.reset_to_issue_branch(self.config.issue_id)
+117                 logger.info(f"成功初始化Bot模式环境，工作目录: {self.temp_dir}")
+118             except Exception as e:
+119                 logger.error(f"初始化Bot模式环境失败: {str(e)}")
+120                 self._cleanup_environment()
+121                 raise
+122 
+123         self.log_manager = LogManager(config=self.log_config)
+124         
+125         # 初始化文件记忆管理，传入log_manager
+126         self.file_memory = FileMemory(
+127             config=FileMemoryConfig(
+128                 git_manager=self.git_manager,
+129                 ai_config=self.data_ai_config,
+130                 project_dir=self.project_dir,
+131                 log_manager=self.log_manager
+132             )
+133         )
+134         self.version_manager = VersionManager(
+135             issue_id=config.issue_id,
+136             ai_config=self.core_ai_config,
+137             log_manager=self.log_manager,
+138             git_manager=self.git_manager,
+139             file_memory=self.file_memory
+140         )
+141         self.file_selector = FileSelector(
+142             self.project_dir,
+143             self.config.issue_id,
+144             ai_config=self.core_ai_config
+145         )
+146 
+147         # 初始化代码工程师
+148         self.code_engineer_config = CodeEngineerConfig(
+149             project_dir=self.project_dir,
+150             ai_config=self.core_ai_config
+151         )
+152         self.engineer = CodeEngineer(
+153             self.code_engineer_config,
+154             self.log_manager,
+155             Diff(self.data_ai_config)
+156         )
+157         
+158         # 初始化聊天处理器
+159         self.chat_processor = ChatProcessor(
+160             ai_config=self.core_ai_config,
+161             log_manager=self.log_manager,
+162             config=ChatProcessorConfig(system_prompt="你是一个项目助手，负责回答关于代码库的问题。下面会给出用户的问题以及相关的项目文件信息。")
+163         )
+164         
+165         # 初始化决策环境
+166         self.decision_env = DecisionProcess(
+167             ai_config=self.core_ai_config,
+168             version_manager=self.version_manager
+169         )
+170 
+171     def _prepare_memory(self):
+172         current_round = self.log_manager.get_current_round()
+173 
+174         # 如果轮次大于1，增量更新上一轮修改的文件详细信息
+175         if self.file_memory and current_round > 1:
+176             self.file_memory.update_file_details()
+177             logger.info("已更新文件详细信息")
+178     
+179     def process_requirement(self, user_requirement: str) -> Optional[str]:
+180         """
+181         处理用户需求
+182         
+183         Args:
+184             user_requirement: 用户需求
+185 
+186         Returns:
+187             str: 处理结果的响应文本
+188         """
+189         try:
+190 
+191             response = self._process_requirement_internal(user_requirement)
+192             
+193             # 如果是bot模式，在结束时清理临时目录
+194             if self.config.mode == "bot":
+195                 self._cleanup_environment()
+196             
+197             return response
+198         except Exception as e:
+199             logger.error(f"处理需求时发生错误: {str(e)}")
+200             raise
+201 
+202 
+203     def _finalize_changes(self, mode: str, comment_text: str) -> bool:
+204         """
+205         完成更改，在bot模式下提交并推送更改
+206 
+207         Args:
+208             mode: 工作模式 ("client" 或 "bot")
+209             comment_text: comment内容
+210 
+211         Returns:
+212             bool: 操作是否成功
+213         """
+214         if mode == "bot":
+215             self.git_manager.commit(f"Issues #{self.config.issue_id} - Changes by Bella-Issues-Bot")
+216             self.git_manager.push()
+217             self.git_manager.add_issue_comment(self.config.issue_id, comment_text)
+218         return True
+219         
+220     def _cleanup_environment(self) -> None:
+221         """
+222         清理工作环境，删除临时目录
+223         """
+224         if self.config.mode == "bot" and self.temp_dir and os.path.exists(self.temp_dir):
+225             try:
+226                 # 关闭git仓库连接
+227                 if hasattr(self, 'git_manager') and self.git_manager:
+228                     self.git_manager.delete_local_repository()
+229                 
+230                 # 删除临时目录
+231                 shutil.rmtree(self.temp_dir, ignore_errors=True)
+232                 logger.info(f"已清理临时工作目录: {self.temp_dir}")
+233             except Exception as e:
+234                 logger.warning(f"清理临时目录时出错: {str(e)}")
+235                 # 即使清理失败也不抛出异常，让主流程继续
+236 
+237     def _process_requirement_internal(self, user_requirement: str) -> Optional[str]:
+238         """
+239         内部处理需求的方法
+240         
+241         Args:
+242             user_requirement: 用户需求
+243             
+244         Returns:
+245             str: 处理结果
+246         """
+247         # 先通过决策环境分析需求类型
+248         decision_result = self.decision_env.analyze_requirement(user_requirement)
+249         
+250         logger.info(f"决策结果: 是否需要修改代码={decision_result.needs_code_modification}, "
+251                     f"理由={decision_result.reasoning}")
+252         
+253         if decision_result.needs_code_modification:
+254             # 执行代码修改流程
+255             response = self._run_code_generation_workflow(user_requirement)
+256         else: 
+257             # 执行对话流程
+258             response = self._run_chat_workflow(user_requirement)
+259         
+260         # 如果是Bot模式且有GitHub配置，自动回复到issue
+261         if self.config.mode == "bot":
+262             try:
+263                 self._finalize_changes(mode=self.config.mode, comment_text=response)
+264                 logger.info(f"更改已经推送到远端，并添加了Issue评论")
+265             except Exception as e:
+266                 logger.error(f"添加Issue评论时出错: {str(e)}")
+267                 
+268         return response
+269     
+270     def _run_code_generation_workflow(self, user_requirement: str) -> Optional[str]:
+271         """
+272         执行代码生成流程，基于example_code_generate.py的逻辑
+273         
+274         Args:
+275             user_requirement: 用户需求
+276             
+277         Returns:
+278             str: 处理结果
+279         """
+280         logger.info("开始执行代码生成流程")
+281 
+282         # 确定当前版本
+283         requirement, history = self.version_manager.ensure_version_and_generate_context(user_requirement)
+284 
+285         self._prepare_memory()
+286 
+287         # 生成提示词
+288         user_prompt = self._get_user_prompt(requirement, history)
+289 
+290         # 根据提示词修改代码
+291         success, response = self.engineer.process_prompt(prompt=user_prompt)
+292 
+293         # 提交更改
+294         if success:
+295             return response
+296         else:
+297             self.CODE_TIMES += 1
+298             if self.CODE_TIMES >= self.config.max_retry:
+299                 logger.error("code workflow超过最大重试次数")
+300                 return self._run_chat_workflow(user_requirement)
+301             else:
+302                 return self._run_code_generation_workflow(user_requirement)
+303     
+304     def _run_chat_workflow(self, user_requirement: str) -> Optional[str]:
+305         """
+306         执行聊天流程，基于example_chat_process.py的逻辑
+307         
+308         Args:
+309             user_requirement: 用户需求
+310             
+311         Returns:
+312             str: 处理结果
+313         """
+314         logger.info("开始执行聊天回复流程")
+315 
+316         self._prepare_memory()
+317 
+318         history = self.version_manager.get_formatted_history()
+319 
+320         # 生成提示词
+321         user_prompt = self._get_user_prompt(user_requirement, history)
+322         
+323         # 处理聊天请求
+324         response = self.chat_processor.process_chat(user_prompt)
+325 
+326         if(response):
+327             return response
+328         else:
+329             self.CHAT_TIMES += 1
+330             if self.CHAT_TIMES >= self.config.max_retry:
+331                 logger.error("chat workflow超过最大重试次数")
+332                 return None
+333             else:
+334                 return self._run_chat_workflow(user_requirement)
+335 
+336     def _get_user_prompt(self, requirement: str, history: str) -> str:
+337         # 选择文件
+338         files = self.file_selector.select_files_for_requirement(requirement)
+339         descriptions = FileMemory.get_selected_file_descriptions(self.project_dir, files)
+340 
+341         # 准备提示词数据
+342         data = PromptData(
+343             requirement=requirement,
+344             project_dir=self.project_dir,
+345             steps=history,
+346             files=files,
+347             file_desc=descriptions
+348         )
+349 
+350         # 生成提示词
+351         return PromptGenerator.generatePrompt(data)
+352
+```
+
+
+
+
+```
+File: core/log_manager.py
+1 import datetime
+2 import os
+3 import json
+4 import shutil
+5 from dataclasses import dataclass, field
+6 from typing import List, Optional
+7 from pydantic import BaseModel
+8 
+9 from core.diff import DiffInfo
+10 from core.log_config import get_logger
+11 
+12 logger = get_logger(__name__)
+13 
+14 @dataclass
+15 class LogConfig:
+16     """日志管理配置"""
+17 
+18     project_dir: str
+19     issue_id: int
+20     mode: str = "client" # ["client", "bot"]
+21 
+22 
+23 class LogEntry(BaseModel):
+24     """存储单次代码生成日志的数据类"""
+25     issue_id: int
+26     round_num: int
+27     sys_prompt: str
+28     prompt: str
+29     response: str
+30     timestamp: str = datetime.datetime.now().isoformat()
+31     log_path: str = ""
+32     modified_files: List[DiffInfo] = []
+33 
+34 
+35 class LogManager:
+36     """管理代码生成日志的存档和检索"""
+37     base_dir: str = ".eng"
+38     logs_base_dir: str = "memory"
+39     rollback_dir: str = "rollback"
+40 
+41     def __init__(self, config: LogConfig):
+42         """
+43         初始化日志管理器
+44 
+45         Args:
+46             config: LogConfig实例，包含必要的配置信息
+47         """
+48         self.config = config
+49         self.issue_id = self.config.issue_id
+50 
+51         
+52         # 根据模式选择存储目录
+53         if self.config.mode == "bot":
+54             logs_dir = "issues"
+55         else:
+56             logs_dir = "queries"
+57             
+58         # 构建完整的日志存储路径
+59         self.logs_path = os.path.join(
+60             self.config.project_dir, 
+61             self.base_dir,
+62             self.logs_base_dir,
+63             logs_dir)
+64         self.issues_path = os.path.join(
+65             self.logs_path, "#" + str(self.issue_id)
+66         )
+67 
+68         self.rollback_path = os.path.join(
+69             self.logs_path, "#" + str(self.issue_id), self.rollback_dir
+70         )
+71 
+72         # 初始化当前轮次
+73         self.current_round = self._get_next_round()
+74 
+75         # 确保必要的目录存在
+76         os.makedirs(self.issues_path, exist_ok=True)
+77         os.makedirs(self.rollback_path, exist_ok=True)
+78 
+79         # 定义日志文件名常量
+80         self.SYS_PROMPT_FILE = "system_prompt.txt"
+81         self.USER_PROMPT_FILE = "user_prompt.txt"
+82         self.AI_RESPONSE_FILE = "ai_response.txt"
+83         self.TIMESTAMP_FILE = "timestamp.txt"
+84         self.MODIFIED_FILES_FILE = "modified_files.txt"
+85 
+86     def archive_logs(self, sys_prompt: str, prompt: str, response: str, diff_infos: List[DiffInfo] = None) -> str:
+87         """
+88         将代码生成日志存档到指定的目录
+89 
+90         Args:
+91             diff_infos: 文件的修改信息
+92             sys_prompt: 系统提示词
+93             prompt: 用户提示词
+94             response: AI响应
+95 
+96         Returns:
+97             str: 存档目录的路径
+98         """
+99         # 获取下一个轮次号
+100 
+101         round_num = self.current_round
+102 
+103         # 获取当前时间戳
+104         timestamp = datetime.datetime.now().isoformat()
+105         
+106         # 创建轮次目录
+107         round_dir = os.path.join(self.issues_path, f"round_{round_num}")
+108         os.makedirs(round_dir, exist_ok=True)
+109         
+110         # 保存系统提示词
+111         with open(os.path.join(round_dir, self.SYS_PROMPT_FILE), "w", encoding="utf-8") as f:
+112             f.write(sys_prompt)
+113         
+114         # 保存用户提示词
+115         with open(os.path.join(round_dir, self.USER_PROMPT_FILE), "w", encoding="utf-8") as f:
+116             f.write(prompt)
+117         
+118         # 保存AI响应
+119         with open(os.path.join(round_dir, self.AI_RESPONSE_FILE), "w", encoding="utf-8") as f:
+120             f.write(response)
+121             
+122         # 保存时间戳
+123         with open(os.path.join(round_dir, self.TIMESTAMP_FILE), "w", encoding="utf-8") as f:
+124             f.write(timestamp)
+125 
+126         # 保存修改的文件列表
+127         if diff_infos:
+128             # 使用 Pydantic 的 dict 方法进行序列化
+129             diff_dicts = [diff.dict() for diff in diff_infos]
+130                 
+131             # 序列化为 JSON 并保存
+132             with open(os.path.join(round_dir, self.MODIFIED_FILES_FILE), "w", encoding="utf-8") as f:
+133                 json.dump(diff_dicts, f, ensure_ascii=False, indent=2)
+134             logger.info(f"保存了 {len(diff_infos)} 个修改的文件记录")
+135         
+136         # 记录日志
+137         logger.info(f"已将日志存档至: {round_dir}")
+138         
+139         # 返回存档目录的路径
+140         return round_dir
+141 
+142     def _get_next_round(self) -> int:
+143         """
+144         获取下一个轮次号
+145 
+146         Returns:
+147             int: 下一个轮次号
+148         """
+149         issue_path = self.issues_path
+150         if not os.path.exists(issue_path):
+151             return 1
+152 
+153         existing_rounds = [
+154             int(d[6:])
+155             for d in os.listdir(issue_path)
+156             if os.path.isdir(os.path.join(issue_path, d)) and (d[6:]).isdigit()
+157         ]
+158 
+159         return max(existing_rounds, default=0) + 1
+160 
+161     def get_current_round(self) -> int:
+162         return self.current_round
+163         
+164     def get_issue_log_entries(self, include_diff: bool = False) -> List[LogEntry]:
+165         """
+166         获取当前issue的所有轮次的日志条目
+167 
+168         Returns:
+169             List[LogEntry]: 日志条目列表，按轮次排序
+170         """
+171         
+172         log_entries = []
+173 
+174         issue_dir = self.issues_path
+175         # 遍历所有轮次目录
+176         for dir_name in os.listdir(issue_dir):
+177             if not dir_name.startswith("round_"):
+178                 continue
+179                 
+180             try:
+181                 round_num = int(dir_name[6:])  # 提取轮次号
+182                 round_dir = os.path.join(issue_dir, dir_name)
+183                 
+184                 # 读取系统提示词
+185                 sys_prompt_path = os.path.join(round_dir, self.SYS_PROMPT_FILE)
+186                 with open(sys_prompt_path, "r", encoding="utf-8") as f:
+187                     sys_prompt = f.read()
+188                 
+189                 # 读取用户提示词
+190                 user_prompt_path = os.path.join(round_dir, self.USER_PROMPT_FILE)
+191                 with open(user_prompt_path, "r", encoding="utf-8") as f:
+192                     prompt = f.read()
+193                 
+194                 # 读取AI响应
+195                 ai_response_path = os.path.join(round_dir, self.AI_RESPONSE_FILE)
+196                 with open(ai_response_path, "r", encoding="utf-8") as f:
+197                     response = f.read()
+198                     
+199                 # 读取修改的文件列表(如果存在)
+200                 modified_files = []
+201                 if include_diff:
+202                     modified_files_path = os.path.join(round_dir, self.MODIFIED_FILES_FILE)
+203                     if os.path.exists(modified_files_path):
+204                         try:
+205                             with open(modified_files_path, "r", encoding="utf-8") as f:
+206                                 diff_dicts = json.load(f)
+207                                 
+208                                 # 将字典转换回 DiffInfo 对象
+209                                 modified_files = [DiffInfo(**diff_dict) for diff_dict in diff_dicts]
+210                         except Exception as e:
+211                             logger.error(f"读取修改文件列表失败: {str(e)}")
+212                     
+213                 # 读取时间戳
+214                 timestamp_path = os.path.join(round_dir, self.TIMESTAMP_FILE)
+215                 timestamp = datetime.datetime.now().isoformat()  # 默认当前时间
+216                 if os.path.exists(timestamp_path):
+217                     try:
+218                         with open(timestamp_path, "r", encoding="utf-8") as f:
+219                             timestamp = f.read().strip()
+220                     except Exception as e:
+221                         logger.error(f"读取时间戳失败: {str(e)}")
+222                 
+223                 # 创建并添加LogEntry对象
+224                 entry = LogEntry(issue_id=self.issue_id, round_num=round_num,
+225                                  sys_prompt=sys_prompt, prompt=prompt, 
+226                                  response=response, timestamp=timestamp, log_path=round_dir,
+227                                  modified_files=modified_files)
+228                 log_entries.append(entry)
+229             except Exception as e:
+230                 logger.error(f"读取轮次 {dir_name} 的日志失败: {str(e)}")
+231         
+232         # 按轮次号排序
+233         return sorted(log_entries, key=lambda entry: entry.round_num)
+234     
+235     def get_issue_round_log_entry(self, round_num: int, include_diff: bool = False) -> Optional[LogEntry]:
+236         """
+237         获取特定轮次的日志条目
+238 
+239         Args:
+240             round_num: 轮次号
+241             include_diff: 是否包含修改信息
+242 
+243         Returns:
+244             Optional[LogEntry]: 指定轮次的日志条目，如果不存在则返回None
+245         """
+246         round_dir = os.path.join(self.issues_path, f"round_{round_num}")
+247         
+248         if not os.path.exists(round_dir):
+249             logger.warning(f"Issue #{self.issue_id} 的轮次 {round_num} 不存在")
+250             return None
+251             
+252         try:
+253             # 直接使用现有方法获取所有轮次，然后过滤出指定轮次
+254             all_entries = self.get_issue_log_entries(include_diff)
+255             return next((entry for entry in all_entries if entry.round_num == round_num), None)
+256         except Exception as e:
+257             logger.error(f"获取 Issue #{self.issue_id} 轮次 {round_num} 的日志失败: {str(e)}")
+258             return None
+259             
+260     def rollback_logs(self, target_round: int) -> bool:
+261         """
+262         将目标轮次之后的日志移至回滚目录
+263         
+264         Args:
+265             target_round: 保留到的轮次，之后的轮次会被移到回滚目录
+266             
+267         Returns:
+268             bool: 操作是否成功
+269         """
+270         try:
+271             # 确保回滚目录存在
+272             os.makedirs(self.rollback_path, exist_ok=True)
+273             
+274             # 获取所有轮次目录
+275             round_dirs = [d for d in os.listdir(self.issues_path) 
+276                          if os.path.isdir(os.path.join(self.issues_path, d)) 
+277                          and d.startswith("round_")]
+278             
+279             # 筛选出需要回滚的轮次目录
+280             rounds_to_rollback = []
+281             for dir_name in round_dirs:
+282                 try:
+283                     round_num = int(dir_name[6:])  # 提取轮次号
+284                     if round_num > target_round:
+285                         rounds_to_rollback.append((round_num, dir_name))
+286                 except ValueError:
+287                     continue
+288             
+289             # 按轮次号排序
+290             rounds_to_rollback.sort(key=lambda x: x[0])
+291             
+292             if not rounds_to_rollback:
+293                 logger.info(f"没有轮次需要回滚")
+294                 return True
+295                 
+296             # 移动轮次日志到回滚目录
+297             for round_num, dir_name in rounds_to_rollback:
+298                 source_path = os.path.join(self.issues_path, dir_name)
+299                 dest_path = os.path.join(self.rollback_path, dir_name)
+300                 
+301                 # 如果目标路径已存在，先删除
+302                 if os.path.exists(dest_path):
+303                     shutil.rmtree(dest_path)
+304                     
+305                 # 移动目录
+306                 shutil.move(source_path, dest_path)
+307                 logger.info(f"已将轮次 {round_num} 的日志移至回滚目录: {dest_path}")
+308             
+309             # 更新当前轮次
+310             self.current_round = self._get_next_round()
+311             return True
+312             
+313         except Exception as e:
+314             logger.error(f"回滚日志失败: {str(e)}")
+315             return False
+316     
+317     def get_rollback_log_entries(self, include_diff: bool = False) -> List[LogEntry]:
+318         """
+319         获取已回滚的所有轮次的日志条目
+320 
+321         Args:
+322             include_diff: 是否包含diff信息
+323 
+324         Returns:
+325             List[LogEntry]: 回滚的日志条目列表，按轮次排序
+326         """
+327         try:
+328             # 如果回滚目录不存在，返回空列表
+329             if not os.path.exists(self.rollback_path):
+330                 return []
+331                 
+332             # 临时保存当前issues_path
+333             original_path = self.issues_path
+334             
+335             # 将issues_path指向rollback_path，复用get_issue_log_entries方法
+336             self.issues_path = self.rollback_path
+337             
+338             # 获取回滚目录中的日志条目
+339             rollback_entries = self.get_issue_log_entries(include_diff)
+340             
+341             # 恢复issues_path
+342             self.issues_path = original_path
+343             
+344             return rollback_entries
+345         except Exception as e:
+346             logger.error(f"获取回滚日志条目失败: {str(e)}")
+347             return []
+348 
+349 if __name__ == "__main__":
+350     config = LogConfig("..", 1)
+351     log_manager = LogManager(config)
+352
+```
+
+
+
+
+```
+File: core/decision.py
+1 """
+2 决策环境模块，用于分析用户需求类型并确定处理流程。
+3 
+4 该模块主要功能：
+5 1. 分析用户输入的需求是否需要修改代码
+6 2. 根据分析结果决定使用代码修改流程还是对话流程
+7 3. 为AI助手提供决策工具
+8 """
+9 
+10 from dataclasses import dataclass
+11 from typing import Optional
+12 
+13 from langchain_core.tools import StructuredTool
+14 from pydantic import BaseModel, Field
+15 
+16 from core.ai import AIAssistant, AIConfig
+17 from core.log_config import get_logger
+18 from core.version_manager import VersionManager
+19 
+20 logger = get_logger(__name__)
+21 
+22 @dataclass
+23 class DecisionResult:
+24     """存储决策结果信息"""
+25     needs_code_modification: bool
+26     reasoning: str
+27 
+28 
+29 class DecisionProcess:
+30     """
+31     决策环境类，用于确定用户需求是代码修改还是对话
+32     """
+33     
+34     def __init__(self, ai_config: AIConfig, version_manager: VersionManager):
+35         """
+36         初始化决策环境
+37         
+38         Args:
+39             ai_config: AI配置信息
+40             version_manager: 版本管理器实例
+41         """
+42         self.version_manager = version_manager
+43         self.ai_assistant = AIAssistant(
+44             config=ai_config, 
+45             tools=[self._create_requirement_analyzer_tool()]
+46         )
+47 
+48     def analyze_requirement(self, user_requirement: str) -> DecisionResult:
+49         """
+50         分析用户需求类型
+51         
+52         Args:
+53             user_requirement: 用户输入的需求
+54             
+55         Returns:
+56             DecisionResult: 决策结果
+57         """
+58         # 获取历史上下文
+59         history_context = self.version_manager.get_formatted_history()
+60         
+61         # 构建提示词
+62         prompt = f"""
+63 # 任务
+64 你需要分析用户的需求是否需要修改项目文件，如代码或文档，还是只需要回答问题。
+65 
+66 # 历史上下文
+67 {history_context}
+68 
+69 # 当前用户需求
+70 {user_requirement}
+71 
+72 # 决策步骤
+73 1. 仔细阅读用户当前的需求
+74 2. 分析需求是否包含代码修改、文档修改、新增功能、修复bug、回滚代码等要求
+75 3. 如果用户只是提问、咨询、请求解释或澄清，则判断为不需要修改代码
+76 4、只要需要修改项目中的文件，则判断为需要修改代码
+77 
+78 请使用requirement_analyzer工具返回决策结果。
+79 """
+80 
+81         # 发送给AI进行分析
+82         response = self.ai_assistant.generate_response(prompt, use_tools=True)
+83         
+84         # 如果没有得到有效决策，默认为需要修改代码
+85         if not isinstance(response, dict) or 'needs_code_modification' not in response:
+86             logger.warning("未获取到有效决策结果，默认为需要修改代码")
+87             return DecisionResult(
+88                 needs_code_modification=True,
+89                 reasoning="无法确定需求类型，默认为代码修改"
+90             )
+91             
+92         return DecisionResult(
+93             needs_code_modification=response['needs_code_modification'],
+94             reasoning=response['reasoning']
+95         )
+96 
+97     class _RequirementAnalyzerSchema(BaseModel):
+98         needs_code_modification: bool = Field(..., description="是否需要修改项目文件，如代码或文档")
+99         reasoning: Optional[str] = Field(None, description="决策理由")
+100 
+101     def _create_requirement_analyzer_tool(self) -> StructuredTool:
+102         """创建需求分析工具"""
+103         return StructuredTool.from_function(
+104             name="requirement_analyzer",
+105             description="分析用户需求是否需要修改项目文件，如代码或文档的工具",
+106             func=lambda **kwargs: kwargs,
+107             args_schema=self._RequirementAnalyzerSchema,
+108             return_direct=True
+109         )
+110
+```
+
+
+
+
+# 用户需求
+
+title：Features: 回滚第一轮的修改时，要保留user_message
+
+回滚工具version_manager_tool调用时，回滚全部修改（即target_round为0）且integrated_requirement为None。要将user_prompt中的用户需求，添加到本轮到用户需求中，作为backgroud。
+
+例如：
+以下user_prompt被回滚:
+
+如果本轮用户需求被回滚，用户的requirement为：“实现的不对，我要xxxx”，
+需要将用户的需求补充为：
+
