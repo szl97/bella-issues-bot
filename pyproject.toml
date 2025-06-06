@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "bella-issues-bot"
-version = "0.1.20"
+version = "0.1.21"
 description = "bella-issues-bot 是一个基于人工智能的多功能代码开发助手，具备两种强大的工作模式：个人开发助手模式：在日常开发过程中，作为命令行工具辅助编码，帮助分析代码、生成实现、解决技术难题。GitHub自动化模式：集成到GitHub工作流中，自动监控和处理项目Issues，无需人工干预即可分析需求、提出解决方案并实现代码变更。"
 authors = ["saizhuolin"]
 license = "MIT"
